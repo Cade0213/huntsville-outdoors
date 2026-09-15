@@ -1,0 +1,802 @@
+// App shell: city search, map, results list, detail panel and tabs.
+// Data: data.js (hand-checked places), seasons.js (AL season dates), live.js (nationwide lookups),
+// states.js (state agencies), resources.js (licenses & gear), calendar.js (season calendar).
+
+// Required disclaimer. In Alabama it names ADCNR verbatim; elsewhere it names that state's wildlife agency.
+const AL_AGENCY_NAME = "Alabama Department of Conservation and Natural Resources (Outdoor Alabama)";
+
+function agencyForDisclaimer(stateAbbrev) {
+  if (stateAbbrev === "AL" || !STATES[stateAbbrev]) return { name: AL_AGENCY_NAME, url: "https://www.outdooralabama.com" };
+  return primaryAgency(stateAbbrev);
+}
+
+function disclaimerText(stateAbbrev) {
+  return `This is not an official source. Always verify current seasons, permits, regulations, and access with the ${agencyForDisclaimer(stateAbbrev).name} and the managing agency. Regulations change.`;
+}
+
+const COLORS = { hunting: "#c0621f", fishing: "#1f6fa3", both: "#6a4c93" };
+const SOON_DAYS = 30;
+const LIST_LIMIT = 250;
+
+// Shared UI state (also read by calendar.js and resources.js).
+const appState = {
+  search: { ...DEFAULT_SEARCH },
+  activity: "both",
+  game: "all",
+  filterText: "",
+  showUnconfirmed: true,
+  tab: "places",
+  selectedId: null,
+  places: [],
+  shops: [],
+  areaStates: [], // state abbreviations touching the search radius
+  areaStatePolys: [],
+  loading: { lands: false, osm: false, states: false },
+  errors: {},
+};
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- Small helpers ----------
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+function milesBetween([lat1, lng1], [lat2, lng2]) {
+  const R = 3958.8;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function formatMiles(mi) {
+  if (mi < 0.05) return "0 mi";
+  if (mi < 1) return "<1 mi";
+  return `${Math.round(mi)} mi`;
+}
+
+function activityKey(place) {
+  return place.activities.length > 1 ? "both" : place.activities[0];
+}
+
+function seasonsAvailable() {
+  const s = appState.search;
+  return s.state === SEASON_COVERAGE.state && milesBetween(s.center, SEASON_COVERAGE.center) <= SEASON_COVERAGE.radiusMi;
+}
+
+function curatedTypeLabel(loc) {
+  if (/visitor center/i.test(loc.name)) return "Refuge visitor center";
+  if (/wildlife refuge/i.test(loc.name)) return "National Wildlife Refuge";
+  if (/WMA/.test(loc.name)) return "Wildlife Management Area";
+  if (/fishing lake/i.test(loc.name)) return "State public fishing lake";
+  if (/ramp|landing/i.test(loc.name)) return "Boat launch";
+  return "River access";
+}
+
+// ---------- Map ----------
+const map = L.map("map", { zoomControl: false, zoomSnap: 0.25, preferCanvas: true }).setView(HUNTSVILLE, 9);
+L.control.zoom({ position: "topright" }).addTo(map);
+
+// We avoid tile.openstreetmap.org (blocks requests with no Referer, e.g. file://) and CARTO (API key).
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
+const baseMaps = {
+  Topo: L.tileLayer(`${ESRI}/World_Topo_Map/MapServer/tile/{z}/{y}/{x}`, {
+    maxZoom: 19,
+    attribution: "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, USGS, NGA, EPA, USDA, NPS · Data: USGS PAD-US, U.S. Census, &copy; OpenStreetMap",
+  }),
+  Satellite: L.tileLayer(`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, {
+    maxZoom: 19,
+    attribution: "Tiles &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics, USDA, USGS",
+  }),
+  "USGS Topo": L.tileLayer("https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}", {
+    maxNativeZoom: 16,
+    maxZoom: 19,
+    attribution: 'Tiles courtesy of the <a href="https://www.usgs.gov/">U.S. Geological Survey</a>',
+  }),
+};
+baseMaps.Topo.addTo(map);
+L.control.layers(baseMaps, null, { position: "topright" }).addTo(map);
+L.control.scale({ position: "bottomleft", imperial: true, metric: false }).addTo(map);
+
+const searchLayer = L.layerGroup().addTo(map);
+const placesLayer = L.layerGroup().addTo(map);
+const layerById = new Map();
+
+// Leaflet needs to be told when its container changes size (panel toggle, orientation change).
+new ResizeObserver(() => map.invalidateSize()).observe($("map"));
+
+// ---------- Season status (North Alabama hand-checked places only) ----------
+function selectedGamesList() {
+  return appState.game === "all" ? Object.keys(GAME) : [appState.game];
+}
+
+function placeSeasonStatus(place) {
+  if (!place.seasonScope || !seasonsAvailable()) return null;
+  const statuses = selectedGamesList().map((g) => gameStatus(place.seasonScope, g, TODAY));
+  if (statuses.some((s) => s.kind === "open")) return "open";
+  if (statuses.some((s) => s.kind === "upcoming" && daysBetween(TODAY, s.date) <= SOON_DAYS)) return "soon";
+  if (statuses.every((s) => s.kind === "none")) return "none";
+  return "later";
+}
+
+function statusText(scopeId, game) {
+  const st = gameStatus(scopeId, game, TODAY);
+  switch (st.kind) {
+    case "open": {
+      const names = st.seasons.map((s) => s.name).join(", ");
+      const end = Math.max(...st.seasons.map((s) => parseDay(s.dates.find((r) => inRange(TODAY, r))[1]).getTime()));
+      return `<span class="st st-open">Open</span> ${escapeHtml(names)} · through ${formatDay(new Date(end))}`;
+    }
+    case "upcoming": {
+      const days = daysBetween(TODAY, st.date);
+      const cls = days <= SOON_DAYS ? "st-soon" : "st-closed";
+      return `<span class="st ${cls}">Opens ${formatDay(st.date)}</span> ${escapeHtml(st.season.name)} · in ${days} day${days === 1 ? "" : "s"}`;
+    }
+    case "closed":
+      return `<span class="st st-closed">Closed</span> for ${SEASON_YEAR}`;
+    default:
+      return `<span class="st st-none">No season here</span>`;
+  }
+}
+
+function statusChip(place) {
+  const status = placeSeasonStatus(place);
+  if (status === "open") return `<span class="chip chip-open">Season open</span>`;
+  if (status === "soon") return `<span class="chip chip-soon">Opens soon</span>`;
+  return "";
+}
+
+// ---------- Building the place list ----------
+// Hand-checked places inside the radius. When searching within North Alabama we keep all of them
+// (flagged outsideRadius) so the core WMAs never silently disappear at a smaller radius.
+function curatedPlaces(center, radius, keepAll) {
+  return LOCATIONS.map((loc) => {
+    const polygons = loc.kind === "zone" ? [[loc.coords]] : null;
+    const point = polygons ? markerPointFor(polygons) : loc.coords;
+    return {
+      ...loc,
+      source: "curated",
+      tier: "verified",
+      polygons,
+      point,
+      typeLabel: curatedTypeLabel(loc),
+      state: "AL",
+      distanceMi: polygons ? milesToPolygons(center, polygons) : milesBetween(center, point),
+    };
+  })
+    .map((p) => ({ ...p, outsideRadius: p.distanceMi > radius }))
+    .filter((p) => keepAll || !p.outsideRadius);
+}
+
+// Real PAD-US boundaries replace hand-drawn placeholders; the duplicate PAD-US entry is dropped.
+function mergeLands(places, lands, center) {
+  const byName = new Map(lands.map((l) => [normalizeName(l.name), l]));
+  const used = new Set();
+  for (const p of places) {
+    if (!p.padusName) continue;
+    const land = byName.get(normalizeName(p.padusName));
+    if (!land) continue;
+    used.add(land.id);
+    p.polygons = land.polygons;
+    p.kind = "zone";
+    p.placeholderBoundary = false;
+    p.acres = land.acres;
+    p.point = land.point;
+    p.distanceMi = milesToPolygons(center, land.polygons);
+    p.outsideRadius = p.distanceMi > appState.search.radius;
+  }
+  return [...places, ...lands.filter((l) => !used.has(l.id))];
+}
+
+function assignStates() {
+  for (const p of appState.places) p.state = stateForPoint(p.point, appState.areaStatePolys, p.state || appState.search.state);
+}
+
+function visiblePlaces() {
+  const q = normalizeName(appState.filterText);
+  return appState.places
+    .filter(
+      (p) =>
+        (appState.activity === "both" || p.activities.includes(appState.activity)) &&
+        (appState.showUnconfirmed || p.source === "curated") &&
+        (!q || normalizeName(p.name).includes(q))
+    )
+    // Hand-checked places first (they have real rules and seasons), then everything else by distance.
+    .sort((a, b) => (a.source === "curated" ? 0 : 1) - (b.source === "curated" ? 0 : 1) || a.distanceMi - b.distanceMi);
+}
+
+// ---------- Map layers ----------
+function markerFor(place, selected) {
+  const key = activityKey(place);
+  const color = COLORS[key];
+  if (place.source === "curated") {
+    const status = placeSeasonStatus(place);
+    return L.marker(place.point, {
+      title: place.name,
+      riseOnHover: true,
+      zIndexOffset: selected ? 1000 : 0,
+      opacity: status === "none" ? 0.45 : 1,
+      icon: L.divIcon({
+        className: "",
+        html: `<div class="pin ${key} ${status ? `status-${status}` : ""} ${selected ? "selected" : ""}"></div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      }),
+    });
+  }
+  return L.circleMarker(place.point, {
+    bubblingMouseEvents: false,
+    radius: selected ? 9 : 6,
+    color,
+    weight: selected ? 4 : 3,
+    fillColor: "#fff",
+    fillOpacity: 1,
+  });
+}
+
+function shapeFor(place, selected) {
+  const color = COLORS[activityKey(place)];
+  const curated = place.source === "curated";
+  return L.polygon(place.polygons, {
+    bubblingMouseEvents: false,
+    color,
+    weight: selected ? 3 : curated ? 2 : 1.2,
+    opacity: selected ? 1 : 0.8,
+    fillColor: color,
+    fillOpacity: selected ? 0.28 : curated ? 0.16 : 0.08,
+    dashArray: place.placeholderBoundary ? "6 6" : null,
+  });
+}
+
+function renderMapLayers() {
+  placesLayer.clearLayers();
+  layerById.clear();
+  const places = visiblePlaces();
+  const bind = (layer, place) =>
+    layer
+      .bindTooltip(escapeHtml(place.name), { direction: "top", offset: [0, -8], sticky: layer instanceof L.Polygon })
+      .on("click", (e) => {
+        L.DomEvent.stopPropagation(e);
+        selectPlace(place.id, { fromMap: true });
+      });
+
+  // Shapes first so dots draw on top of them on the shared canvas.
+  for (const place of places) {
+    if (!place.polygons) continue;
+    const shape = bind(shapeFor(place, place.id === appState.selectedId), place);
+    placesLayer.addLayer(shape);
+    layerById.set(place.id, { shape });
+  }
+  for (const place of places) {
+    const marker = bind(markerFor(place, place.id === appState.selectedId), place);
+    placesLayer.addLayer(marker);
+    layerById.set(place.id, { ...(layerById.get(place.id) || {}), marker });
+  }
+}
+
+function renderSearchLayer() {
+  const { center, radius, label } = appState.search;
+  searchLayer.clearLayers();
+  const circle = L.circle(center, {
+    radius: radius * MILES_TO_METERS,
+    color: "#2f4a36",
+    weight: 2,
+    dashArray: "8 6",
+    fill: true,
+    fillOpacity: 0.03,
+    interactive: false,
+  }).addTo(searchLayer);
+  L.marker(center, {
+    keyboard: false,
+    interactive: true,
+    icon: L.divIcon({ className: "", html: '<div class="pin home"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+  })
+    .bindTooltip(`${escapeHtml(label)} · ${radius} mi radius`, { direction: "top", offset: [0, -8] })
+    .addTo(searchLayer);
+  return circle;
+}
+
+// ---------- Results list ----------
+function trustBadge(place) {
+  if (place.source === "curated") return `<span class="badge verified" title="Hand-checked against official sources">Checked</span>`;
+  return `<span class="badge unconfirmed" title="From public data — rules not confirmed">Unconfirmed</span>`;
+}
+
+function activityChips(place) {
+  return place.activities.map((a) => `<span class="act act-${a}">${a === "hunting" ? "Hunt" : "Fish"}</span>`).join("");
+}
+
+function renderList() {
+  const places = visiblePlaces();
+  const { search, loading, errors } = appState;
+  const curatedCount = places.filter((p) => p.source === "curated").length;
+
+  $("tab-count").textContent = places.length ? places.length : "";
+  $("results-summary").innerHTML = places.length
+    ? `<strong>${places.length}</strong> place${places.length === 1 ? "" : "s"} within ${search.radius} mi of <strong>${escapeHtml(search.label)}</strong>` +
+      (curatedCount ? ` · ${curatedCount} checked` : "")
+    : `No places yet within ${search.radius} mi of <strong>${escapeHtml(search.label)}</strong>`;
+
+  const lines = [];
+  if (loading.lands) lines.push(`<p class="loading-line"><span class="spinner"></span>Searching federal &amp; state public lands…</p>`);
+  if (loading.osm) lines.push(`<p class="loading-line"><span class="spinner"></span>Finding boat ramps &amp; fishing piers…</p>`);
+  if (errors.lands) lines.push(`<p class="notice">Couldn't load public lands (${escapeHtml(errors.lands)}). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
+  if (errors.osm) lines.push(`<p class="notice">Boat ramps & shops are temporarily unavailable (OpenStreetMap servers are busy). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
+  if (!loading.lands && !loading.osm && !places.length && !errors.lands)
+    lines.push(`<p class="notice">Nothing matches these filters. Try a larger radius, “Both”, or clear the name filter.</p>`);
+  $("results-status").innerHTML = lines.join("");
+
+  $("results-list").innerHTML =
+    places
+      .slice(0, LIST_LIMIT)
+      .map(
+        (p) => `
+      <li>
+        <button type="button" class="result ${p.id === appState.selectedId ? "is-selected" : ""}" data-id="${escapeHtml(p.id)}">
+          <span class="result-icon ${activityKey(p)} ${p.source === "curated" ? "solid" : ""}" aria-hidden="true"></span>
+          <span class="result-main">
+            <span class="result-name">${escapeHtml(p.name)}</span>
+            <span class="result-sub">${escapeHtml(p.typeLabel)}${p.state && p.state !== search.state ? ` · ${p.state}` : ""}${p.outsideRadius ? ` · outside ${search.radius}-mi radius` : ""}</span>
+            <span class="result-tags">${activityChips(p)}${trustBadge(p)}${statusChip(p)}</span>
+          </span>
+          <span class="result-dist">${formatMiles(p.distanceMi)}</span>
+        </button>
+      </li>`
+      )
+      .join("") +
+    (places.length > LIST_LIMIT
+      ? `<li class="list-more">Showing the closest ${LIST_LIMIT} of ${places.length}. Narrow the radius or filter by name to see others.</li>`
+      : "");
+}
+
+// ---------- Detail panel ----------
+function landNote(place) {
+  if (place.source === "osm")
+    return "Mapped by OpenStreetMap volunteers. It may be private, closed, or out of date, and fishing rules still apply. Confirm access before you go.";
+  const t = place.typeLabel;
+  let specific = "";
+  if (t === "National Forest") specific = " National forest land is generally open to hunting and fishing under state regulations, with local closures.";
+  else if (t === "BLM public land") specific = " BLM land is generally open to hunting and fishing under state regulations, with local closures.";
+  else if (t === "National Wildlife Refuge") specific = " Many refuges allow hunting or fishing only in certain units and seasons, and some allow none — check the refuge's own rules.";
+  else if (t === "Wildlife Management Area") specific = " Wildlife management areas usually require extra permits and have their own season dates.";
+  return `This is public land from the USGS Protected Areas Database. The database shows who owns it and whether the public can get in. It does not say whether hunting or fishing is allowed.${specific}`;
+}
+
+function seasonsBlock(place) {
+  if (!place.seasonScope) return "";
+  if (!seasonsAvailable())
+    return `<p class="notice">Season dates are only shown when you search inside ${SEASON_COVERAGE.label}.</p>`;
+  const rows = selectedGamesList()
+    .map(
+      (g) => `<li><span class="game-dot" style="background:${GAME[g].color}"></span>
+        <span class="g-label">${GAME[g].label}</span><span class="g-status">${statusText(place.seasonScope, g)}</span></li>`
+    )
+    .join("");
+  return `
+    <section class="detail-seasons">
+      <h3>${SEASON_YEAR} seasons <span class="sub">as of ${formatDay(TODAY)}</span></h3>
+      <ul>${rows}</ul>
+      <button type="button" class="btn-secondary small" data-cal-scope="${place.seasonScope}">Open full season calendar</button>
+    </section>`;
+}
+
+function renderDetail(place) {
+  const { search } = appState;
+  const agency = primaryAgency(place.state || search.state);
+  const facts = [
+    ["Distance", `${formatMiles(place.distanceMi)} from ${escapeHtml(search.label)}<small>${place.polygons ? "straight-line to nearest edge" : "straight-line"}</small>`],
+    ["Managed by", escapeHtml(place.manager)],
+    place.access && ["Access", escapeHtml(place.access)],
+    place.acres ? ["Size", `~${place.acres.toLocaleString()} acres`] : null,
+    place.state && STATES[place.state] ? ["State", STATES[place.state].name] : null,
+  ].filter(Boolean);
+
+  const actions = [];
+  if (place.source === "curated") {
+    actions.push(`<a class="btn-primary block" href="${escapeHtml(place.sourceUrl)}" target="_blank" rel="noopener">View official source &rarr;</a>`);
+    if (place.mapUrl) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.mapUrl)}" target="_blank" rel="noopener">Official map &amp; rules</a>`);
+  } else if (agency) {
+    actions.push(`<a class="btn-primary block" href="${escapeHtml(agency.url)}" target="_blank" rel="noopener">Check rules: ${escapeHtml(agency.name)} &rarr;</a>`);
+  }
+  actions.push(`<a class="btn-secondary" href="https://www.google.com/maps/dir/?api=1&destination=${place.point[0]},${place.point[1]}" target="_blank" rel="noopener">Directions</a>`);
+  if (place.osmUrl) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.osmUrl)}" target="_blank" rel="noopener">View on OpenStreetMap</a>`);
+  actions.push(`<button type="button" class="btn-secondary" data-zoom="${escapeHtml(place.id)}">Zoom to</button>`);
+
+
+  $("place-detail").innerHTML = `
+    <div class="detail-nav"><button type="button" class="back-btn" data-back>&larr; All places</button></div>
+    <header class="detail-head">
+      <div class="result-tags">${activityChips(place)}${trustBadge(place)}${statusChip(place)}</div>
+      <h2>${escapeHtml(place.name)}</h2>
+      <p class="detail-type">${escapeHtml(place.typeLabel)}</p>
+    </header>
+    <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
+    <p class="detail-desc">${escapeHtml(place.description)}</p>
+    ${place.source !== "curated" ? `<div class="notice warn"><strong>Not confirmed open to hunting or fishing.</strong> ${escapeHtml(landNote(place))}</div>` : ""}
+    ${place.placeholderBoundary ? `<p class="notice">The dashed shape is a rough placeholder, not the official boundary. Search again to load the real boundary.</p>` : ""}
+    ${seasonsBlock(place)}
+    <div class="detail-actions">${actions.join("")}</div>
+    <div class="popup-warning"><strong>Not official.</strong> ${escapeHtml(disclaimerText(place.state || search.state))}</div>
+    <p class="data-credit">${
+      place.source === "curated"
+        ? "Hand-checked listing. Coordinates are approximate."
+        : place.source === "padus"
+          ? 'Boundary: <a href="https://www.usgs.gov/programs/gap-analysis-project/science/protected-areas" target="_blank" rel="noopener">USGS PAD-US</a> (simplified).'
+          : 'Location: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">&copy; OpenStreetMap contributors</a>.'
+    }</p>`;
+}
+
+// ---------- Panel view switching ----------
+let listScrollTop = 0;
+
+function showPanel() {
+  const { tab, selectedId } = appState;
+  const place = selectedId && appState.places.find((p) => p.id === selectedId);
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
+    const name = panel.dataset.panel;
+    panel.hidden = !(
+      (tab === "places" && name === (place ? "detail" : "places")) ||
+      (tab !== "places" && name === tab)
+    );
+  });
+  if (tab === "places" && place) renderDetail(place);
+}
+
+function setTab(tab) {
+  if (appState.tab === "places" && !appState.selectedId) listScrollTop = $("panel-body").scrollTop;
+  appState.tab = tab;
+  showPanel();
+  $("panel-body").scrollTop = tab === "places" && !appState.selectedId ? listScrollTop : 0;
+}
+
+function selectPlace(id, { fromMap = false } = {}) {
+  if (!appState.selectedId && appState.tab === "places") listScrollTop = $("panel-body").scrollTop;
+  appState.selectedId = id;
+  appState.tab = "places";
+  const place = appState.places.find((p) => p.id === id);
+  renderMapLayers();
+  showPanel();
+  $("panel-body").scrollTop = 0;
+  if (place && !fromMap) zoomToPlace(place);
+  else if (place && !map.getBounds().contains(place.point)) map.panTo(place.point);
+}
+
+function clearSelection() {
+  appState.selectedId = null;
+  renderMapLayers();
+  renderList();
+  showPanel();
+  $("panel-body").scrollTop = listScrollTop;
+}
+
+function zoomToPlace(place) {
+  const layers = layerById.get(place.id);
+  if (layers?.shape) map.fitBounds(layers.shape.getBounds(), { padding: [40, 40], maxZoom: 13 });
+  else map.setView(place.point, Math.max(map.getZoom(), 13));
+}
+
+// ---------- Rendering everything that depends on state ----------
+function refreshAll() {
+  const gameVisible = seasonsAvailable() && appState.activity !== "fishing";
+  $("map-game-wrap").hidden = !gameVisible;
+  renderMapLayers();
+  renderList();
+  renderCalendar();
+  renderResources();
+  if (appState.selectedId && !appState.places.some((p) => p.id === appState.selectedId)) appState.selectedId = null;
+  showPanel();
+  renderDisclaimerAgency();
+}
+
+function renderDisclaimerAgency() {
+  const agency = agencyForDisclaimer(appState.search.state);
+  const link = $("disclaimer-agency");
+  link.textContent = agency.name;
+  link.href = agency.url;
+}
+
+// ---------- Search ----------
+let searchToken = 0;
+let searchAbort = null;
+
+async function runSearch(search, { fit = true, updateUrl = true } = {}) {
+  const token = ++searchToken;
+  searchAbort?.abort();
+  searchAbort = new AbortController();
+  const { signal } = searchAbort;
+
+  appState.search = { ...search }; // seasonsAvailable() reads this
+  appState.selectedId = null;
+  appState.places = curatedPlaces(search.center, search.radius, seasonsAvailable());
+  appState.shops = [];
+  appState.areaStates = [search.state].filter(Boolean);
+  appState.areaStatePolys = [];
+  appState.loading = { lands: true, osm: true, states: true };
+  appState.errors = {};
+
+  $("city-search").value = search.label;
+  $("radius-select").value = String(search.radius);
+  if (updateUrl) writeUrl();
+
+  const circle = renderSearchLayer();
+  if (fit) map.fitBounds(circle.getBounds(), { padding: [16, 16] });
+  if (appState.tab === "places") $("panel-body").scrollTop = 0;
+  refreshAll();
+
+  const stale = () => token !== searchToken;
+
+  const statesTask = fetchStatesInArea(search.center, search.radius, signal)
+    .then((states) => {
+      if (stale()) return;
+      appState.areaStatePolys = states;
+      appState.areaStates = [...new Set([search.state, ...states.map((s) => s.abbr)].filter((a) => STATES[a]))];
+      assignStates();
+    })
+    .catch(() => {})
+    .finally(() => {
+      if (stale()) return;
+      appState.loading.states = false;
+      renderResources();
+      renderList();
+      if (appState.tab === "seasons") renderCalendar();
+    });
+
+  const landsTask = fetchPublicLands(search.center, search.radius, signal)
+    .then(async (lands) => {
+      if (stale()) return;
+      await statesTask;
+      if (stale()) return;
+      appState.places = mergeLands(appState.places, lands, search.center);
+      assignStates();
+    })
+    .catch((err) => {
+      if (!stale() && !signal.aborted) appState.errors.lands = err.name === "TimeoutError" ? "timed out" : err.message;
+    })
+    .finally(() => {
+      if (stale()) return;
+      appState.loading.lands = false;
+      renderMapLayers();
+      renderList();
+    });
+
+  fetchOsmFeatures(search.center, search.radius, signal)
+    .then(async ({ water, shops }) => {
+      if (stale()) return;
+      await Promise.allSettled([statesTask, landsTask]);
+      if (stale()) return;
+      // Skip mapped ramps that duplicate a hand-checked spot or a same-named public land (e.g. a fishing access site).
+      const curatedFishing = appState.places.filter((p) => p.source === "curated" && p.activities.includes("fishing"));
+      const lands = appState.places.filter((p) => p.source === "padus");
+      const fresh = water.filter((w) => {
+        if (curatedFishing.some((c) => milesBetween(c.point, w.point) < 0.3)) return false;
+        const key = normalizeName(w.name);
+        return !lands.some((l) => normalizeName(l.name).startsWith(key) && milesToPolygons(w.point, l.polygons) < 1);
+      });
+      appState.places = [...appState.places, ...fresh];
+      appState.shops = shops;
+      assignStates();
+    })
+    .catch(() => {
+      if (!stale() && !signal.aborted) appState.errors.osm = true;
+    })
+    .finally(() => {
+      if (stale()) return;
+      appState.loading.osm = false;
+      renderMapLayers();
+      renderList();
+      renderResources();
+    });
+}
+
+function retrySearch() {
+  runSearch(appState.search, { fit: false, updateUrl: false });
+}
+
+// ---------- URL state (shareable links; ?date= preview is preserved) ----------
+function writeUrl() {
+  const { label, center, state, radius } = appState.search;
+  const params = new URLSearchParams(location.search);
+  params.set("q", label);
+  params.set("lat", center[0].toFixed(5));
+  params.set("lng", center[1].toFixed(5));
+  params.set("st", state);
+  params.set("r", radius);
+  try {
+    history.replaceState(null, "", `${location.pathname}?${params}`);
+  } catch {
+    // Some browsers block history changes on file:// pages; the app still works without it.
+  }
+}
+
+function readUrl() {
+  const p = new URLSearchParams(location.search);
+  const lat = parseFloat(p.get("lat"));
+  const lng = parseFloat(p.get("lng"));
+  const radius = [10, 25, 50, 100].includes(+p.get("r")) ? +p.get("r") : DEFAULT_SEARCH.radius;
+  if (!p.get("q") || Number.isNaN(lat) || Number.isNaN(lng)) return { ...DEFAULT_SEARCH, radius };
+  return { label: p.get("q"), center: [lat, lng], state: stateAbbr(p.get("st")), radius };
+}
+
+// ---------- City autocomplete ----------
+const searchInput = $("city-search");
+const suggestionsEl = $("city-suggestions");
+let suggestions = [];
+let activeIndex = -1;
+let suggestTimer = null;
+let suggestAbort = null;
+
+function closeSuggestions() {
+  suggestionsEl.hidden = true;
+  searchInput.setAttribute("aria-expanded", "false");
+  activeIndex = -1;
+}
+
+function renderSuggestions(message) {
+  if (message) {
+    suggestionsEl.innerHTML = `<li class="suggestion-msg">${escapeHtml(message)}</li>`;
+  } else {
+    suggestionsEl.innerHTML = suggestions
+      .map(
+        (s, i) => `<li role="option" id="sugg-${i}" class="suggestion ${i === activeIndex ? "active" : ""}" data-index="${i}" aria-selected="${i === activeIndex}">
+          <span class="s-name">${escapeHtml(s.label)}</span><span class="s-detail">${escapeHtml(s.detail)}</span></li>`
+      )
+      .join("");
+  }
+  suggestionsEl.hidden = false;
+  searchInput.setAttribute("aria-expanded", "true");
+  searchInput.setAttribute("aria-activedescendant", activeIndex >= 0 ? `sugg-${activeIndex}` : "");
+}
+
+function chooseSuggestion(s) {
+  closeSuggestions();
+  searchInput.blur();
+  runSearch({ label: s.label, center: s.center, state: s.state, radius: +$("radius-select").value });
+}
+
+searchInput.addEventListener("input", () => {
+  clearTimeout(suggestTimer);
+  const text = searchInput.value.trim();
+  if (text.length < 3) {
+    suggestions = [];
+    closeSuggestions();
+    return;
+  }
+  suggestTimer = setTimeout(async () => {
+    suggestAbort?.abort();
+    suggestAbort = new AbortController();
+    try {
+      suggestions = await geocodeCities(text, suggestAbort.signal);
+      activeIndex = suggestions.length ? 0 : -1;
+      renderSuggestions(suggestions.length ? null : "No U.S. cities found");
+    } catch (err) {
+      if (err.name !== "AbortError") renderSuggestions("City search is unavailable — press Enter to try again");
+    }
+  }, 300);
+});
+
+searchInput.addEventListener("keydown", (e) => {
+  if (suggestionsEl.hidden || !suggestions.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    activeIndex = (activeIndex + (e.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length;
+    renderSuggestions();
+  } else if (e.key === "Escape") {
+    closeSuggestions();
+  }
+});
+
+suggestionsEl.addEventListener("mousedown", (e) => {
+  const li = e.target.closest("[data-index]");
+  if (!li) return;
+  e.preventDefault(); // keep focus so the click lands
+  chooseSuggestion(suggestions[+li.dataset.index]);
+});
+
+searchInput.addEventListener("blur", () => setTimeout(closeSuggestions, 150));
+
+$("search-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearTimeout(suggestTimer);
+  const text = searchInput.value.trim();
+  if (!suggestionsEl.hidden && suggestions[activeIndex]) return chooseSuggestion(suggestions[activeIndex]);
+  if (text === appState.search.label) return runSearch({ ...appState.search, radius: +$("radius-select").value });
+  if (text.length < 2) return;
+
+  renderSuggestions("Searching…");
+  try {
+    let results = [];
+    try {
+      results = await geocodeCities(text);
+    } catch {
+      results = await geocodeFallback(text);
+    }
+    if (!results.length) results = await geocodeFallback(text);
+    if (results.length) chooseSuggestion(results[0]);
+    else renderSuggestions(`Couldn't find “${text}” in the U.S.`);
+  } catch {
+    renderSuggestions("City search is unavailable right now. Try again shortly.");
+  }
+});
+
+$("radius-select").addEventListener("change", (e) => {
+  runSearch({ ...appState.search, radius: +e.target.value });
+});
+
+// ---------- Filters, tabs & panel events ----------
+document.querySelectorAll('input[name="activity"]').forEach((input) =>
+  input.addEventListener("change", (e) => {
+    appState.activity = e.target.value;
+    refreshAll();
+  })
+);
+
+$("list-filter").addEventListener("input", (e) => {
+  appState.filterText = e.target.value;
+  renderMapLayers();
+  renderList();
+});
+
+$("show-unconfirmed").addEventListener("change", (e) => {
+  appState.showUnconfirmed = e.target.checked;
+  renderMapLayers();
+  renderList();
+});
+
+document.querySelectorAll(".game-select").forEach((sel) => {
+  sel.innerHTML =
+    `<option value="all">All game seasons</option>` +
+    Object.entries(GAME).map(([id, g]) => `<option value="${id}">${g.label}</option>`).join("");
+  sel.addEventListener("change", (e) => {
+    appState.game = e.target.value;
+    document.querySelectorAll(".game-select").forEach((s) => (s.value = appState.game));
+    refreshAll();
+  });
+});
+
+document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setTab(tab.dataset.tab)));
+
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  const result = t.closest(".result[data-id]");
+  if (result) return selectPlace(result.dataset.id);
+  if (t.closest("[data-back]")) return clearSelection();
+  const zoom = t.closest("[data-zoom]");
+  if (zoom) {
+    const place = appState.places.find((p) => p.id === zoom.dataset.zoom);
+    if (place) zoomToPlace(place);
+    return;
+  }
+  const calBtn = t.closest("[data-cal-scope]");
+  if (calBtn) {
+    setCalendarScope(calBtn.dataset.calScope);
+    return setTab("seasons");
+  }
+  if (t.closest("[data-retry]")) return retrySearch();
+  if (t.closest("[data-search-default]")) return runSearch({ ...DEFAULT_SEARCH });
+});
+
+// Click on empty map closes the detail view.
+map.on("click", () => {
+  if (appState.selectedId) clearSelection();
+});
+
+// Phone layout: let the map take most of the screen.
+$("map-toggle").addEventListener("click", () => {
+  const expanded = $("app").classList.toggle("map-expanded");
+  $("map-toggle").setAttribute("aria-pressed", String(expanded));
+  $("map-toggle").textContent = expanded ? "Show list" : "Expand map";
+});
+
+// Disclaimer "More" toggle (the full text is clamped on small screens).
+$("disclaimer-toggle").addEventListener("click", () => {
+  const open = $("disclaimer").classList.toggle("open");
+  $("disclaimer-toggle").setAttribute("aria-expanded", String(open));
+  $("disclaimer-toggle").textContent = open ? "Less" : "More";
+});
+
+// ---------- Start ----------
+initCalendar();
+runSearch(readUrl(), { updateUrl: false });

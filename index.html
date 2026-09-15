@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Public Lands &amp; Waters – Hunting &amp; Fishing Finder</title>
+  <meta name="description" content="Unofficial map of public hunting and fishing opportunities near any U.S. city, with season dates and license resources." />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="disclaimer" role="note" id="disclaimer">
+    <p class="disclaimer-text">
+      <strong>⚠️ Unofficial source.</strong>
+      This is not an official source. Always verify current seasons, permits, regulations, and access with the
+      <a id="disclaimer-agency" href="https://www.outdooralabama.com" target="_blank" rel="noopener">Alabama Department of Conservation and Natural Resources (Outdoor Alabama)</a>
+      and the managing agency. Regulations change.
+    </p>
+    <button type="button" class="disclaimer-toggle" id="disclaimer-toggle" aria-expanded="false">More</button>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">🦌</span>
+      <div>
+        <h1>Public Lands &amp; Waters</h1>
+        <p>Find public hunting &amp; fishing near any U.S. city</p>
+      </div>
+    </div>
+
+    <form class="search" id="search-form" role="search" autocomplete="off">
+      <div class="search-box">
+        <label for="city-search" class="sr-only">Search for a U.S. city</label>
+        <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 014.38 8.82l3.65 3.65-1.06 1.06-3.65-3.65A5.5 5.5 0 118.5 3zm0 1.5a4 4 0 100 8 4 4 0 000-8z" fill="currentColor"/></svg>
+        <input id="city-search" type="search" placeholder="Search a city, e.g. Boise, ID" role="combobox"
+               aria-autocomplete="list" aria-expanded="false" aria-controls="city-suggestions" spellcheck="false" />
+        <ul id="city-suggestions" class="suggestions" role="listbox" hidden></ul>
+      </div>
+      <label class="radius">
+        <span class="sr-only">Search radius</span>
+        <select id="radius-select" aria-label="Search radius">
+          <option value="10">10 mi</option>
+          <option value="25">25 mi</option>
+          <option value="50" selected>50 mi</option>
+          <option value="100">100 mi</option>
+        </select>
+      </label>
+      <button type="submit" class="btn-primary">Search</button>
+    </form>
+  </header>
+
+  <div class="app" id="app">
+    <!-- Side panel: tabs for places / seasons / licenses. On phones it sits under the map. -->
+    <aside class="panel" id="panel" aria-label="Results and details">
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab" data-tab="places" aria-selected="true">Places <span class="tab-count" id="tab-count"></span></button>
+        <button type="button" role="tab" class="tab" data-tab="seasons" aria-selected="false">Seasons</button>
+        <button type="button" role="tab" class="tab" data-tab="resources" aria-selected="false">Licenses &amp; Gear</button>
+      </nav>
+
+      <div class="panel-body" id="panel-body">
+        <!-- PLACES: list view -->
+        <section class="tab-panel" data-panel="places" id="places-list-view">
+          <div class="filters">
+            <div class="segmented" role="radiogroup" aria-label="Activity">
+              <label><input type="radio" name="activity" value="hunting" /><span>Hunting</span></label>
+              <label><input type="radio" name="activity" value="fishing" /><span>Fishing</span></label>
+              <label><input type="radio" name="activity" value="both" checked /><span>Both</span></label>
+            </div>
+            <div class="filter-row">
+              <input type="search" id="list-filter" class="list-filter" placeholder="Filter by name…" aria-label="Filter results by name" />
+              <label class="game-wrap" id="map-game-wrap">
+                <span class="sr-only">Game season</span>
+                <select id="map-game" class="game-select" aria-label="Game season"></select>
+              </label>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="show-unconfirmed" checked />
+              <span>Include unconfirmed public lands &amp; ramps</span>
+            </label>
+          </div>
+
+          <div class="results-head">
+            <p id="results-summary" aria-live="polite"></p>
+            <details class="map-key">
+              <summary>Map key</summary>
+              <ul>
+                <li><span class="key-pin hunting"></span>Hunting · checked</li>
+                <li><span class="key-pin fishing"></span>Fishing · checked</li>
+                <li><span class="key-dot hunting"></span>Hunting · unconfirmed</li>
+                <li><span class="key-dot fishing"></span>Fishing · unconfirmed</li>
+                <li><span class="key-dot both"></span>Hunting &amp; fishing</li>
+                <li><span class="key-pin hunting ring-open"></span>Season open today</li>
+                <li><span class="key-pin hunting ring-soon"></span>Opens within 30 days</li>
+                <li><span class="key-area"></span>Public land boundary</li>
+              </ul>
+            </details>
+          </div>
+
+          <div id="results-status"></div>
+          <ul class="results" id="results-list"></ul>
+        </section>
+
+        <!-- PLACES: detail view -->
+        <section class="tab-panel detail" data-panel="detail" id="place-detail" hidden></section>
+
+        <!-- SEASONS -->
+        <section class="tab-panel" data-panel="seasons" hidden>
+          <div id="cal-empty" hidden></div>
+          <div id="cal-content">
+            <div class="panel-heading">
+              <h2>Season Calendar <span class="pill">2026–27</span></h2>
+              <p class="sub">Openings and closings around today · North Alabama</p>
+            </div>
+            <div class="cal-controls">
+              <label>Area <select id="cal-scope"></select></label>
+              <label>Game <select id="cal-game" class="game-select"></select></label>
+            </div>
+            <p class="stale-warning" id="stale-warning" hidden>
+              Today is outside the 2026–27 season year these dates cover. Check Outdoor Alabama for current dates.
+            </p>
+            <p class="scope-summary" id="scope-summary"></p>
+
+            <div class="today-card">
+              <span class="today-kicker">Today</span>
+              <span id="today-label"></span>
+            </div>
+            <h3 class="mini-head">Open today</h3>
+            <ul id="open-now" class="agenda-list"></ul>
+            <h3 class="mini-head" id="upcoming-heading">Coming up</h3>
+            <ul id="upcoming" class="agenda-list upcoming"></ul>
+
+            <div class="month">
+              <div class="month-nav">
+                <button type="button" id="month-prev" aria-label="Previous month">&lsaquo;</button>
+                <h3 id="month-title"></h3>
+                <button type="button" id="month-next" aria-label="Next month">&rsaquo;</button>
+                <button type="button" id="month-today" class="today-btn">Today</button>
+              </div>
+              <div class="month-grid" id="month-grid"></div>
+              <div class="cal-legend" id="cal-legend"></div>
+              <div class="day-detail" id="day-detail" aria-live="polite"></div>
+            </div>
+
+            <p class="fine-print">
+              <strong>Not official.</strong> Dates are summarized from ADCNR's 2026–27 season pages, WMA AREA permits,
+              and the Wheeler NWR hunt permit. Bag limits, legal weapons, zone boundaries, quota hunts and hunt-day
+              restrictions are not fully listed. ADCNR notes federal waterfowl frameworks were not final at printing.
+            </p>
+          </div>
+        </section>
+
+        <!-- LICENSES & GEAR -->
+        <section class="tab-panel" data-panel="resources" hidden>
+          <div class="panel-heading">
+            <h2>Licenses &amp; Permits</h2>
+            <p class="sub" id="license-intro"></p>
+          </div>
+          <div class="res-list" id="license-list"></div>
+
+          <div class="panel-heading">
+            <h2>Hunting Firearms &amp; Gear</h2>
+            <p class="sub">Gun shops, hunting and tackle stores near your search.</p>
+          </div>
+          <div class="res-list" id="gear-list"></div>
+          <p class="fine-print">
+            Store listings are for convenience, not endorsements. Hours, inventory and services change — call ahead.
+            Firearm purchases from licensed dealers require a federal background check; know federal, state and local laws.
+          </p>
+        </section>
+      </div>
+    </aside>
+
+    <main class="map-area">
+      <div id="map" aria-label="Map of public hunting and fishing areas"></div>
+      <button type="button" class="map-toggle" id="map-toggle" aria-pressed="false">Expand map</button>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="states.js"></script>
+  <script src="seasons.js"></script>
+  <script src="data.js"></script>
+  <script src="live.js"></script>
+  <script src="resources.js"></script>
+  <script src="calendar.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
