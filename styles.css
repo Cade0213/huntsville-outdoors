@@ -498,7 +498,19 @@ body.on-draws .search { display: none; }
 .facts dt { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; }
 .facts dd { margin: 2px 0 0; font-size: 0.9rem; font-weight: 600; overflow-wrap: anywhere; }
 .facts small { display: block; font-weight: 400; color: var(--muted); font-size: 0.75rem; }
-.detail-desc { margin: 0 0 10px; line-height: 1.5; }
+/* The description is the one piece of prose on the card, so give it a little more presence:
+   sand panel with a moss rule, matching the .scope-summary treatment used in the Seasons tab. */
+.detail-desc {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--sand);
+  border-left: 4px solid var(--moss);
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  line-height: 1.55;
+  color: var(--text);
+}
 
 .detail-seasons {
   border: 1px solid var(--line);
@@ -506,9 +518,18 @@ body.on-draws .search { display: none; }
   padding: 10px 12px;
   margin: 12px 0;
 }
-.detail-seasons h3 { margin: 0 0 6px; font-size: 0.95rem; }
+/* Title left, calendar button pinned to the top-right corner of the card. */
+.detail-seasons-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.detail-seasons-head .icon-btn { flex: none; }
+.detail-seasons h3 { margin: 0; font-size: 0.95rem; min-width: 0; }
 .detail-seasons h3 .sub { font-weight: 400; color: var(--muted); font-size: 0.8rem; }
-.detail-seasons ul { list-style: none; margin: 0 0 10px; padding: 0; }
+.detail-seasons ul { list-style: none; margin: 0; padding: 0; }
 .detail-seasons li {
   display: grid;
   grid-template-columns: 14px 110px minmax(0, 1fr);

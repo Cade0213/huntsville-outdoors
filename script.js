@@ -150,9 +150,10 @@ function statusChip(place) {
 }
 
 // ---------- Building the place list ----------
-// Hand-checked places inside the radius. When searching within North Alabama we keep all of them
-// (flagged outsideRadius) so the core WMAs never silently disappear at a smaller radius.
-function curatedPlaces(center, radius, keepAll) {
+// Every hand-checked place, each flagged with whether it falls inside the search radius.
+// Nothing is dropped here: mergeLands() may later replace a rough placeholder outline with the
+// real PAD-US boundary and recompute the distance, so the radius is enforced in visiblePlaces().
+function curatedPlaces(center, radius) {
   return LOCATIONS.map((loc) => {
     const polygons = loc.kind === "zone" ? [[loc.coords]] : null;
     const point = polygons ? markerPointFor(polygons) : loc.coords;
@@ -167,8 +168,7 @@ function curatedPlaces(center, radius, keepAll) {
       distanceMi: polygons ? milesToPolygons(center, polygons) : milesBetween(center, point),
     };
   })
-    .map((p) => ({ ...p, outsideRadius: p.distanceMi > radius }))
-    .filter((p) => keepAll || !p.outsideRadius);
+    .map((p) => ({ ...p, outsideRadius: p.distanceMi > radius }));
 }
 
 // Real PAD-US boundaries replace hand-drawn placeholders; the duplicate PAD-US entry is dropped.
@@ -200,6 +200,7 @@ function visiblePlaces() {
   return appState.places
     .filter(
       (p) =>
+        !p.outsideRadius &&
         (appState.activity === "both" || p.activities.includes(appState.activity)) &&
         (appState.showUnconfirmed || p.source === "curated") &&
         (!q || normalizeName(p.name).includes(q))
@@ -209,11 +210,33 @@ function visiblePlaces() {
 }
 
 // ---------- Map layers ----------
+// A large parcel can reach into the search radius while its interior centre sits well outside it
+// (Bankhead NF, or Wheeler NWR's river corridor). Those places belong in the results — they are
+// public land within the radius — but drawing the dot at the centre puts a marker outside the
+// search circle, which reads as a bug. Anchor it at the nearest point on the boundary instead.
+function markerPoint(place) {
+  const { center, radius } = appState.search;
+  if (!place.polygons || milesBetween(center, place.point) <= radius) return place.point;
+  let best = place.point;
+  let bestMi = Infinity;
+  for (const poly of place.polygons) {
+    for (const pt of poly[0]) {
+      const mi = milesBetween(center, pt);
+      if (mi < bestMi) {
+        bestMi = mi;
+        best = pt;
+      }
+    }
+  }
+  return best;
+}
+
 function markerFor(place, selected) {
   const key = activityKey(place);
   const color = COLORS[key];
+  const point = markerPoint(place);
   if (place.source === "curated") {
-    return L.marker(place.point, {
+    return L.marker(point, {
       title: place.name,
       riseOnHover: true,
       zIndexOffset: selected ? 1000 : 0,
@@ -225,7 +248,7 @@ function markerFor(place, selected) {
       }),
     });
   }
-  return L.circleMarker(place.point, {
+  return L.circleMarker(point, {
     bubblingMouseEvents: false,
     radius: selected ? 9 : 6,
     color: "#fff",
@@ -375,16 +398,18 @@ function seasonsBlock(place) {
     .join("");
   return `
     <section class="detail-seasons">
-      <h3>${SEASON_YEAR} seasons <span class="sub">as of ${formatDay(TODAY)}</span></h3>
+      <div class="detail-seasons-head">
+        <h3>${SEASON_YEAR} seasons <span class="sub">as of ${formatDay(TODAY)}</span></h3>
+        <button type="button" class="btn-secondary small icon-btn" data-cal-scope="${place.seasonScope}"
+          aria-label="Open full season calendar" title="Open full season calendar">
+          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
+            <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+              d="M7 3v3M17 3v3M4 9h16M5.5 5.5h13a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 19V7a1.5 1.5 0 011.5-1.5z"/>
+            <rect x="7.5" y="12" width="3" height="3" rx="0.6" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
       <ul>${rows}</ul>
-      <button type="button" class="btn-secondary small icon-btn" data-cal-scope="${place.seasonScope}"
-        aria-label="Open full season calendar" title="Open full season calendar">
-        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
-          <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
-            d="M7 3v3M17 3v3M4 9h16M5.5 5.5h13a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 19V7a1.5 1.5 0 011.5-1.5z"/>
-          <rect x="7.5" y="12" width="3" height="3" rx="0.6" fill="currentColor"/>
-        </svg>
-      </button>
     </section>`;
 }
 
@@ -418,8 +443,8 @@ function renderDetail(place) {
       <h2>${escapeHtml(place.name)}</h2>
       <p class="detail-type">${escapeHtml(place.typeLabel)}</p>
     </header>
-    <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
     <p class="detail-desc">${escapeHtml(place.description)}</p>
+    <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
     ${place.source !== "curated" ? `<div class="notice warn"><strong>Not confirmed open to hunting or fishing.</strong> ${escapeHtml(landNote(place))}</div>` : ""}
     ${place.placeholderBoundary ? `<p class="notice">The dashed shape is a rough placeholder, not the official boundary. Search again to load the real boundary.</p>` : ""}
     ${seasonsBlock(place)}
@@ -516,7 +541,7 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
 
   appState.search = { ...search }; // seasonsAvailable() reads this
   appState.selectedId = null;
-  appState.places = curatedPlaces(search.center, search.radius, seasonsAvailable());
+  appState.places = curatedPlaces(search.center, search.radius);
   appState.shops = [];
   appState.areaStates = [search.state].filter(Boolean);
   appState.areaStatePolys = [];
