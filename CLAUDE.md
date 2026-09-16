@@ -160,14 +160,23 @@ legal there.
 `sqlite3` + `urllib`, no dependencies.
 
 ```bash
-python3 tools/build_database.py --rebuild        # drop and reload
-python3 tools/build_database.py                  # incremental, idempotent
-python3 tools/build_database.py --dry-run        # fetch and report, write nothing
 python3 tools/build_database.py --list-regions
+python3 tools/build_database.py --rebuild             # drop and reload everything
+python3 tools/build_database.py --region wy           # one region, straight from the network
+python3 tools/build_database.py --dry-run             # fetch and report, write nothing
+
+# Two-phase workflow for many regions. --fetch-only touches no database, so any number of
+# these can run concurrently; --from-cache then writes in one serial process.
+python3 tools/build_database.py --region mt --fetch-only     # -> data/cache/mt.json
+python3 tools/build_database.py --from-cache --region mt
 ```
 
-Currently loads the Huntsville, AL test region only (49 PAD-US features, 22 counties). The
-frontend still reads the `.js` files; nothing consumes the database yet.
+Loads 16 regions: `huntsville_al` (a 50-mile radius region) plus 15 statewide regions —
+AL MS LA FL GA TN AR SC NC MT WY AZ OR ND SD. 24,420 protected areas, 1,026 counties,
+~225 MB. The frontend still reads the `.js` files; nothing consumes the database yet.
+
+`data/outdoors.sqlite` (~225 MB) and `data/cache/` (~200 MB) are build artifacts and are
+almost certainly `.gitignore` candidates rather than things to commit.
 
 Design points that matter if you extend it:
 - Idempotency comes from upserting on `feature_key` (a content hash of identifying attributes plus
@@ -180,9 +189,26 @@ Design points that matter if you extend it:
   the deliberate encoding of what PAD-US cannot tell us — don't "improve" it by guessing values.
 - Geometry is stored full-resolution as GeoJSON TEXT. Nationwide with the same filter this would be
   ~375 MB (52,555 features); 433 parcels over 100k acres account for over half of that.
-- Adding a region means adding an entry to `REGIONS`; adding a data type means adding to `SOURCES`,
-  a table with `region_code`/`source_code`/`retrieval_id`, and a `load_*()` function. The script's
-  module docstring spells this out.
+- Adding a region means adding an entry to `REGIONS` (or one line in `STATE_REGIONS` for a
+  whole state); adding a data type means adding to `SOURCES`, a table with
+  `region_code`/`source_code`/`retrieval_id`, and a `load_*()` function. The script's module
+  docstring spells this out.
+- **Statewide regions are selected geometrically**, by intersecting the official Census state
+  boundary, because PAD-US has no usable state attribute (`ST_Name` is `'Not Applicable'` on
+  every feature, exactly like `BndryID`). The boundary polygon is too large for a GET query
+  string, which is why all ArcGIS calls go out as POST.
+- Counties for a statewide region filter on **state FIPS**, not the boundary: neighbouring
+  states share that boundary line, so a spatial `intersects` returned 133 counties for North
+  Carolina instead of 100.
+- `feature_key` includes `region_code`, so a parcel straddling a state line is stored once per
+  state and correctly attributed to each. Chattahoochee National Forest appears under GA, TN,
+  SC and NC.
+- **Watch for silent truncation.** ArcGIS reports `exceededTransferLimit` at the top level for
+  `f=json` but nests it under `properties` for `f=geojson`. Checking only the top level
+  truncated Wyoming to exactly 1,000 of its 18,641 parcels, and the load looked perfectly
+  healthy. `arcgis_query()` now checks both places, keeps paging on a full page, and
+  `verify_arcgis_count()` re-asks the service with `returnCountOnly` and raises rather than
+  write a partial dataset. A round number of rows is the tell.
 
 ## Scope discipline
 

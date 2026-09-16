@@ -100,6 +100,24 @@ SOURCES = {
             "Explicitly NOT authoritative for whether hunting or fishing is permitted."
         ),
     },
+    "census_tigerweb_states": {
+        "name": "TIGERweb State_County (States layer)",
+        "publisher": "U.S. Census Bureau",
+        "publisher_type": "federal",
+        "authority_tier": 3,
+        "landing_url": "https://tigerweb.geo.census.gov/tigerwebmain/TIGERweb_apps.html",
+        "service_url": (
+            "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/"
+            "State_County/MapServer/0"
+        ),
+        "citation": "U.S. Census Bureau, TIGERweb REST services, State_County/States layer.",
+        "license": "Public domain (U.S. Government work).",
+        "notes": (
+            "Supplies the official state boundary used as the spatial filter for statewide "
+            "regions. PAD-US cannot be filtered by state attribute: its ST_Name field is "
+            "'Not Applicable' on every feature, so state selection must be geometric."
+        ),
+    },
     "census_tigerweb_counties": {
         "name": "TIGERweb State_County (Counties layer)",
         "publisher": "U.S. Census Bureau",
@@ -175,6 +193,18 @@ PADUS_HUNT_FISH_FILTER = (
     "AND FeatClass = 'Fee'"
 )
 
+# Statewide regions. These select PAD-US geometrically, using the official Census state
+# boundary, because PAD-US has no usable state attribute (ST_Name is 'Not Applicable'
+# everywhere, exactly like BndryID). A parcel that straddles a state line intersects both
+# boundaries and is therefore loaded once per state — see make_feature_key().
+STATE_REGIONS = {
+    "al": "Alabama",      "ms": "Mississippi",   "la": "Louisiana",
+    "fl": "Florida",      "ga": "Georgia",       "tn": "Tennessee",
+    "ar": "Arkansas",     "sc": "South Carolina", "nc": "North Carolina",
+    "mt": "Montana",      "wy": "Wyoming",       "az": "Arizona",
+    "or": "Oregon",       "nd": "North Dakota",  "sd": "South Dakota",
+}
+
 REGIONS = {
     "huntsville_al": {
         "name": "Huntsville, Alabama and surrounding area",
@@ -201,6 +231,24 @@ REGIONS = {
         ],
     },
 }
+
+# Expand STATE_REGIONS into full region records. Adding a state is a one-line edit above.
+for _code, _name in STATE_REGIONS.items():
+    REGIONS[_code] = {
+        "name": f"{_name} (statewide)",
+        "state_abbr": _code.upper(),
+        "kind": "state",
+        "state_name": _name,
+        "center_lat": None,
+        "center_lng": None,
+        "radius_mi": None,
+        "padus_filter": PADUS_HUNT_FISH_FILTER,
+        "notes": (
+            f"All PAD-US public-access land in {_name} matching the standard filter. "
+            "Selected by intersecting the official Census state boundary."
+        ),
+        "agencies": [],
+    }
 
 # PAD-US Pub_Access domain values. The feature service does not publish a coded-value
 # domain (checked: no `domain` on any field), so the labels below are recorded with a
@@ -244,7 +292,8 @@ CREATE TABLE IF NOT EXISTS retrievals (
     region_code     TEXT REFERENCES regions(region_code),
     data_type       TEXT NOT NULL,        -- protected_areas | region_counties | ...
     retrieved_at    TEXT NOT NULL,        -- ISO-8601 UTC
-    request_url     TEXT NOT NULL,        -- paste into a browser to reproduce
+    request_url     TEXT NOT NULL,        -- endpoint; replay with:  curl --data "<request_params>" <request_url>
+    request_params  TEXT,                 -- urlencoded POST body, so the query stays replayable
     http_status     INTEGER,
     record_count    INTEGER,
     status          TEXT NOT NULL,        -- ok | error
@@ -257,9 +306,13 @@ CREATE TABLE IF NOT EXISTS regions (
     region_code     TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     state_abbr      TEXT,
-    center_lat      REAL NOT NULL,
-    center_lng      REAL NOT NULL,
-    radius_mi       REAL NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'radius',  -- radius | state
+    -- centre/radius apply to kind='radius'; state regions use boundary_geojson instead
+    center_lat      REAL,
+    center_lng      REAL,
+    radius_mi       REAL,
+    boundary_geojson TEXT,                -- official Census state boundary (kind='state')
+    boundary_source_code TEXT REFERENCES sources(source_code),
     bbox_min_lat    REAL, bbox_min_lng REAL, bbox_max_lat REAL, bbox_max_lng REAL,
     padus_filter    TEXT,                 -- the exact PAD-US WHERE clause loaded
     notes           TEXT,
@@ -389,7 +442,19 @@ def http_get_json(url: str) -> tuple[dict, int]:
         return json.load(resp), resp.status
 
 
-def arcgis_query(service_url: str, params: dict) -> tuple[list, str, int]:
+def http_post_json(url: str, params: dict) -> tuple[dict, int]:
+    """POST a form-encoded ArcGIS query. Used because a state-boundary polygon filter is
+    far too large for a GET query string."""
+    body = urllib.parse.urlencode(params).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        return json.load(resp), resp.status
+
+
+def arcgis_query(service_url: str, params: dict) -> tuple[list, str, str, int]:
     """
     Query an ArcGIS REST FeatureServer/MapServer layer, following pagination.
 
@@ -397,35 +462,116 @@ def arcgis_query(service_url: str, params: dict) -> tuple[list, str, int]:
     a silent truncation, so this pages on `exceededTransferLimit` and raises if the
     service reports an error.
 
-    Returns (features, first_request_url, http_status).
+    Returns (features, endpoint_url, first_page_params, http_status).
     """
     features: list = []
-    first_url = ""
+    endpoint = f"{service_url}/query"
+    first_params = ""
     status = 0
     offset = 0
+    page_size = int(params.get("resultRecordCount") or 0)
 
     while True:
         page = dict(params)
         page["resultOffset"] = offset
-        url = f"{service_url}/query?{urllib.parse.urlencode(page)}"
-        if not first_url:
-            first_url = url
+        if not first_params:
+            first_params = urllib.parse.urlencode(page)
 
-        payload, status = http_get_json(url)
+        payload, status = http_post_json(endpoint, page)
         if "error" in payload:
-            raise RuntimeError(f"ArcGIS error: {payload['error'].get('message')} ({url})")
+            raise RuntimeError(f"ArcGIS error: {payload['error'].get('message')} ({endpoint})")
 
         batch = payload.get("features", [])
         features.extend(batch)
+        if not batch:
+            break
 
-        if not payload.get("exceededTransferLimit") or not batch:
+        # Where the truncation flag lives depends on the output format: f=json puts
+        # exceededTransferLimit at the top level, f=geojson buries it under "properties".
+        # Checking only the top level silently truncated Wyoming at one page of 1000.
+        more = bool(payload.get("exceededTransferLimit")
+                    or (payload.get("properties") or {}).get("exceededTransferLimit"))
+        # Belt and braces: a full page almost certainly means there is another one, whatever
+        # the service chose to report.
+        if not more and not (page_size and len(batch) == page_size):
             break
         offset += len(batch)
 
-    return features, first_url, status
+    verify_arcgis_count(endpoint, params, len(features))
+    return features, endpoint, first_params, status
 
 
-def make_feature_key(source_code: str, attrs: dict, geometry: dict) -> str:
+def verify_arcgis_count(endpoint: str, params: dict, fetched: int) -> None:
+    """
+    Assert we got everything the service says exists.
+
+    Silent truncation is the worst possible failure for a source-of-truth loader: the
+    database looks fine and is quietly missing rows. This re-asks the same query with
+    returnCountOnly and refuses to proceed on a mismatch.
+    """
+    count_params = {k: v for k, v in params.items()
+                    if k not in ("outFields", "returnGeometry", "outSR", "geometryPrecision",
+                                 "resultRecordCount", "resultOffset", "orderByFields", "f")}
+    count_params.update({"returnCountOnly": "true", "f": "json"})
+    payload, _ = http_post_json(endpoint, count_params)
+    expected = payload.get("count")
+    if expected is None:
+        return  # service declined to count; nothing to check against
+    if fetched != expected:
+        raise RuntimeError(
+            f"TRUNCATED FETCH: got {fetched} features but the service reports {expected} "
+            f"for this query ({endpoint}). Refusing to write incomplete data."
+        )
+
+
+def state_boundary(state_name: str) -> tuple[dict, str]:
+    """Official Census state boundary (+ FIPS), simplified enough to send as a spatial filter."""
+    feats, _, _, _ = arcgis_query(
+        SOURCES["census_tigerweb_states"]["service_url"],
+        {"where": f"NAME = \'{state_name}\'", "outFields": "NAME,STUSAB,STATE",
+         "returnGeometry": "true", "outSR": 4326,
+         "maxAllowableOffset": 0.01, "geometryPrecision": 5, "f": "json"},
+    )
+    if not feats:
+        raise RuntimeError(f"Census returned no boundary for {state_name}")
+    return ({"rings": feats[0]["geometry"]["rings"], "spatialReference": {"wkid": 4326}},
+            feats[0]["attributes"]["STATE"])
+
+
+def county_params(region: dict) -> dict:
+    """
+    Counties for a region.
+
+    For a statewide region this filters on the state FIPS code rather than intersecting the
+    boundary: two states that share a border also share that boundary line, so a spatial
+    'intersects' returns every border county in the neighbouring states too (North Carolina
+    came back with 133 counties instead of 100).
+    """
+    if region.get("kind") == "state":
+        return {"where": f"STATE = \'{region['_fips']}\'"}
+    return {"where": "1=1", **spatial_params(region)}
+
+
+def spatial_params(region: dict) -> dict:
+    """The spatial half of a PAD-US/TIGERweb query, per region kind."""
+    if region.get("kind") == "state":
+        return {
+            "geometry": json.dumps(region["_boundary"]),
+            "geometryType": "esriGeometryPolygon",
+            "inSR": 4326,
+            "spatialRel": "esriSpatialRelIntersects",
+        }
+    return {
+        "geometry": f"{region['center_lng']},{region['center_lat']}",
+        "geometryType": "esriGeometryPoint",
+        "inSR": 4326,
+        "distance": region["radius_mi"],
+        "units": "esriSRUnit_StatuteMile",
+        "spatialRel": "esriSpatialRelIntersects",
+    }
+
+
+def make_feature_key(region_code: str, source_code: str, attrs: dict, geometry: dict) -> str:
     """
     Deterministic identity for a PAD-US tract.
 
@@ -438,9 +584,14 @@ def make_feature_key(source_code: str, attrs: dict, geometry: dict) -> str:
     therefore produces a NEW row and the old one is retired, which is the correct
     behaviour for a source of truth: you want a boundary change to be visible, not
     silently overwritten.
+
+    region_code is part of the key so each region is a self-contained extract. A parcel
+    straddling a state line intersects both boundaries and is stored once per state,
+    correctly attributed to each, rather than flip-flopping between them.
     """
     payload = json.dumps(
         {
+            "region": region_code,
             "source": source_code,
             "unit_name": attrs.get("Unit_Nm"),
             "manager_name": attrs.get("MngNm_Desc"),
@@ -523,23 +674,41 @@ def upsert_sources(conn: sqlite3.Connection) -> None:
 
 def upsert_region(conn: sqlite3.Connection, code: str, region: dict) -> None:
     now = utc_now()
-    min_lat, min_lng, max_lat, max_lng = bbox_for_region(region)
+    kind = region.get("kind", "radius")
+    if kind == "state":
+        # Bounding box comes from the official boundary itself.
+        pts = [pt for ring in region["_boundary"]["rings"] for pt in ring]
+        lngs = [p[0] for p in pts]
+        lats = [p[1] for p in pts]
+        min_lat, min_lng, max_lat, max_lng = min(lats), min(lngs), max(lats), max(lngs)
+        boundary = json.dumps({"type": "Polygon", "coordinates": region["_boundary"]["rings"]},
+                              separators=(",", ":"))
+        boundary_src = "census_tigerweb_states"
+    else:
+        min_lat, min_lng, max_lat, max_lng = bbox_for_region(region)
+        boundary, boundary_src = None, None
+
     conn.execute(
         """
-        INSERT INTO regions (region_code, name, state_abbr, center_lat, center_lng, radius_mi,
+        INSERT INTO regions (region_code, name, state_abbr, kind, center_lat, center_lng, radius_mi,
+                             boundary_geojson, boundary_source_code,
                              bbox_min_lat, bbox_min_lng, bbox_max_lat, bbox_max_lng,
                              padus_filter, notes, created_at, last_updated)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(region_code) DO UPDATE SET
-            name=excluded.name, state_abbr=excluded.state_abbr,
+            name=excluded.name, state_abbr=excluded.state_abbr, kind=excluded.kind,
             center_lat=excluded.center_lat, center_lng=excluded.center_lng,
-            radius_mi=excluded.radius_mi, bbox_min_lat=excluded.bbox_min_lat,
+            radius_mi=excluded.radius_mi, boundary_geojson=excluded.boundary_geojson,
+            boundary_source_code=excluded.boundary_source_code,
+            bbox_min_lat=excluded.bbox_min_lat,
             bbox_min_lng=excluded.bbox_min_lng, bbox_max_lat=excluded.bbox_max_lat,
             bbox_max_lng=excluded.bbox_max_lng, padus_filter=excluded.padus_filter,
             notes=excluded.notes, last_updated=excluded.last_updated
         """,
-        (code, region["name"], region["state_abbr"], region["center_lat"], region["center_lng"],
-         region["radius_mi"], min_lat, min_lng, max_lat, max_lng,
+        (code, region["name"], region["state_abbr"], kind,
+         region["center_lat"], region["center_lng"], region["radius_mi"],
+         boundary, boundary_src,
+         min_lat, min_lng, max_lat, max_lng,
          region["padus_filter"], region["notes"], now, now),
     )
 
@@ -561,16 +730,16 @@ def upsert_region(conn: sqlite3.Connection, code: str, region: dict) -> None:
         )
 
 
-def log_retrieval(conn, source_code, region_code, data_type, request_url,
-                  http_status, record_count, status="ok", message=None) -> int:
+def log_retrieval(conn, source_code, region_code, data_type, request_url, request_params,
+                  http_status, record_count, status="ok", message=None, retrieved_at=None) -> int:
     cur = conn.execute(
         """
         INSERT INTO retrievals (source_code, region_code, data_type, retrieved_at, request_url,
-                                http_status, record_count, status, message)
-        VALUES (?,?,?,?,?,?,?,?,?)
+                                request_params, http_status, record_count, status, message)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
-        (source_code, region_code, data_type, utc_now(), request_url,
-         http_status, record_count, status, message),
+        (source_code, region_code, data_type, retrieved_at or utc_now(), request_url,
+         request_params, http_status, record_count, status, message),
     )
     return cur.lastrowid
 
@@ -597,19 +766,14 @@ def retire_missing(conn, table, region_code, source_code, live_keys, key_col) ->
 # --------------------------------------------------------------------------------------
 # Loaders
 # --------------------------------------------------------------------------------------
-def load_protected_areas(conn, region_code, region, dry_run=False) -> dict:
+def load_protected_areas(conn, region_code, region, dry_run=False, cached=None) -> dict:
     """USGS PAD-US -> protected_areas + area_activities."""
     source_code = "usgs_padus_public_access"
     service = SOURCES[source_code]["service_url"]
 
     params = {
         "where": region["padus_filter"],
-        "geometry": f"{region['center_lng']},{region['center_lat']}",
-        "geometryType": "esriGeometryPoint",
-        "inSR": 4326,
-        "distance": region["radius_mi"],
-        "units": "esriSRUnit_StatuteMile",
-        "spatialRel": "esriSpatialRelIntersects",
+        **spatial_params(region),
         "outFields": ("OBJECTID,Unit_Nm,Pub_Access,DesTp_Desc,MngNm_Desc,MngTp_Desc,"
                       "GIS_Acres,ST_Name,Category,FeatClass,GAP_Sts"),
         "returnGeometry": "true",
@@ -621,13 +785,20 @@ def load_protected_areas(conn, region_code, region, dry_run=False) -> dict:
         "resultRecordCount": 1000,
     }
 
-    features, url, http_status = arcgis_query(service, params)
+    if cached is not None:
+        features = cached["features"]
+        url, req_params = cached["request_url"], cached["request_params"]
+        http_status, fetched_at = cached["http_status"], cached["retrieved_at"]
+    else:
+        features, url, req_params, http_status = arcgis_query(service, params)
+        fetched_at = utc_now()
     print(f"  PAD-US: {len(features)} features")
     if dry_run:
         return {"fetched": len(features), "written": 0, "retired": 0}
 
     retrieval_id = log_retrieval(conn, source_code, region_code, "protected_areas",
-                                 url, http_status, len(features))
+                                 url, req_params, http_status, len(features),
+                                 retrieved_at=fetched_at)
 
     now = utc_now()
     live_keys, written = set(), 0
@@ -637,7 +808,7 @@ def load_protected_areas(conn, region_code, region, dry_run=False) -> dict:
         if not geom:
             continue  # a feature with no geometry cannot be placed; skip rather than guess
 
-        key = make_feature_key(source_code, attrs, geom)
+        key = make_feature_key(region_code, source_code, attrs, geom)
         live_keys.add(key)
         lat, lng = geometry_bbox_centre(geom)
 
@@ -720,29 +891,30 @@ def load_area_activities(conn, region_code, region) -> None:
             )
 
 
-def load_region_counties(conn, region_code, region, dry_run=False) -> dict:
+def load_region_counties(conn, region_code, region, dry_run=False, cached=None) -> dict:
     """U.S. Census TIGERweb -> region_counties."""
     source_code = "census_tigerweb_counties"
     service = SOURCES[source_code]["service_url"]
     params = {
-        "where": "1=1",
-        "geometry": f"{region['center_lng']},{region['center_lat']}",
-        "geometryType": "esriGeometryPoint",
-        "inSR": 4326,
-        "distance": region["radius_mi"],
-        "units": "esriSRUnit_StatuteMile",
-        "spatialRel": "esriSpatialRelIntersects",
+        **county_params(region),
         "outFields": "GEOID,NAME,STATE,COUNTY",
         "returnGeometry": "false",
         "f": "json",
     }
-    features, url, http_status = arcgis_query(service, params)
+    if cached is not None:
+        features = cached["features"]
+        url, req_params = cached["request_url"], cached["request_params"]
+        http_status, fetched_at = cached["http_status"], cached["retrieved_at"]
+    else:
+        features, url, req_params, http_status = arcgis_query(service, params)
+        fetched_at = utc_now()
     print(f"  TIGERweb counties: {len(features)}")
     if dry_run:
         return {"fetched": len(features), "written": 0}
 
     retrieval_id = log_retrieval(conn, source_code, region_code, "region_counties",
-                                 url, http_status, len(features))
+                                 url, req_params, http_status, len(features),
+                                 retrieved_at=fetched_at)
     now = utc_now()
     for feat in features:
         a = feat.get("attributes", {})
@@ -761,17 +933,99 @@ def load_region_counties(conn, region_code, region, dry_run=False) -> dict:
     return {"fetched": len(features), "written": len(features)}
 
 
-def load_region(conn, region_code, dry_run=False) -> None:
-    region = REGIONS[region_code]
+# --------------------------------------------------------------------------------------
+# Fetch cache.
+#
+# SQLite takes one writer at a time, so fetching many regions concurrently against a single
+# database is not safe. The split below is what makes parallelism work: --fetch-only does
+# the slow, network-bound half and writes a self-contained JSON payload per region; a later
+# --from-cache pass does all the database writing in one serial process. The cached payload
+# carries the endpoint, the exact POST body and the retrieval timestamp, so provenance
+# survives the round trip and `retrievals` still points at a replayable query.
+# --------------------------------------------------------------------------------------
+CACHE_DIR = REPO_ROOT / "data" / "cache"
+
+
+def cache_path(region_code: str) -> Path:
+    return CACHE_DIR / f"{region_code}.json"
+
+
+def prepare_region(region_code: str) -> dict:
+    """Resolve anything a region needs before querying (e.g. its official boundary)."""
+    region = dict(REGIONS[region_code])
+    if region.get("kind") == "state":
+        region["_boundary"], region["_fips"] = state_boundary(region["state_name"])
+    return region
+
+
+def fetch_region(region_code: str) -> dict:
+    """Fetch every dataset for a region and return a cacheable payload. No DB access."""
+    region = prepare_region(region_code)
+    payload = {"region_code": region_code, "fetched_at": utc_now(), "datasets": {}}
+    if region.get("kind") == "state":
+        payload["boundary"] = region["_boundary"]
+        payload["fips"] = region["_fips"]
+
+    jobs = [
+        ("region_counties", SOURCES["census_tigerweb_counties"]["service_url"],
+         {**county_params(region), "outFields": "GEOID,NAME,STATE,COUNTY",
+          "returnGeometry": "false", "f": "json"}),
+        ("protected_areas", SOURCES["usgs_padus_public_access"]["service_url"],
+         {"where": region["padus_filter"], **spatial_params(region),
+          "outFields": ("OBJECTID,Unit_Nm,Pub_Access,DesTp_Desc,MngNm_Desc,MngTp_Desc,"
+                        "GIS_Acres,ST_Name,Category,FeatClass,GAP_Sts"),
+          "returnGeometry": "true", "outSR": 4326, "geometryPrecision": 6,
+          "f": "geojson", "resultRecordCount": 1000}),
+    ]
+    for name, service, params in jobs:
+        feats, url, req_params, status = arcgis_query(service, params)
+        payload["datasets"][name] = {
+            "features": feats, "request_url": url, "request_params": req_params,
+            "http_status": status, "retrieved_at": utc_now(),
+        }
+    return payload
+
+
+def write_cache(region_code: str, payload: dict) -> Path:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = cache_path(region_code)
+    tmp = path.with_suffix(".json.tmp")
+    with open(tmp, "w") as fh:
+        json.dump(payload, fh, separators=(",", ":"))
+    tmp.replace(path)  # atomic, so a half-written cache is never consumed
+    return path
+
+
+def read_cache(region_code: str) -> dict:
+    path = cache_path(region_code)
+    if not path.exists():
+        raise FileNotFoundError(f"no cache for '{region_code}' — run --fetch-only first ({path})")
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def load_region(conn, region_code, dry_run=False, use_cache=False) -> None:
+    region = prepare_region(region_code) if not use_cache else dict(REGIONS[region_code])
+    cache = None
+    if use_cache:
+        cache = read_cache(region_code)
+        if region.get("kind") == "state":
+            region["_boundary"] = cache["boundary"]
+            region["_fips"] = cache["fips"]
+
     print(f"\nRegion: {region_code} — {region['name']}")
-    print(f"  centre {region['center_lat']}, {region['center_lng']}  radius {region['radius_mi']} mi")
+    if region.get("kind") == "state":
+        print(f"  statewide, official Census boundary" + (" (from cache)" if use_cache else ""))
+    else:
+        print(f"  centre {region['center_lat']}, {region['center_lng']}  radius {region['radius_mi']} mi")
 
     if not dry_run:
         upsert_sources(conn)
         upsert_region(conn, region_code, region)
 
-    counties = load_region_counties(conn, region_code, region, dry_run)
-    areas = load_protected_areas(conn, region_code, region, dry_run)
+    ds = (cache or {}).get("datasets", {})
+    counties = load_region_counties(conn, region_code, region, dry_run, ds.get("region_counties"))
+    areas = load_protected_areas(conn, region_code, region, dry_run, ds.get("protected_areas"))
 
     print(f"  -> protected_areas: {areas['written']} written, {areas['retired']} retired")
     print(f"  -> region_counties: {counties['written']} written")
@@ -805,11 +1059,16 @@ def main() -> int:
     ap.add_argument("--rebuild", action="store_true", help="delete the database file first")
     ap.add_argument("--dry-run", action="store_true", help="fetch and report, write nothing")
     ap.add_argument("--list-regions", action="store_true", help="list configured regions and exit")
+    ap.add_argument("--fetch-only", action="store_true",
+                    help="fetch to data/cache/<region>.json and exit; safe to run in parallel")
+    ap.add_argument("--from-cache", action="store_true",
+                    help="load from data/cache/ instead of the network (single writer)")
     args = ap.parse_args()
 
     if args.list_regions:
         for code, r in REGIONS.items():
-            print(f"{code:<18} {r['name']} ({r['radius_mi']:.0f} mi)")
+            extent = "statewide" if r.get("kind") == "state" else f"{r['radius_mi']:.0f} mi radius"
+            print(f"{code:<18} {r['name']:<34} {extent}")
         return 0
 
     codes = args.region or list(REGIONS)
@@ -818,6 +1077,20 @@ def main() -> int:
         print(f"Unknown region(s): {', '.join(unknown)}", file=sys.stderr)
         print(f"Known: {', '.join(REGIONS)}", file=sys.stderr)
         return 2
+
+    # Fetch-only: no database is opened at all, so any number of these can run at once.
+    if args.fetch_only:
+        rc = 0
+        for code in codes:
+            try:
+                payload = fetch_region(code)
+                path = write_cache(code, payload)
+                counts = {k: len(v["features"]) for k, v in payload["datasets"].items()}
+                print(f"{code}: {counts} -> {path} ({path.stat().st_size/1e6:.1f} MB)")
+            except Exception as exc:
+                print(f"{code}: FETCH FAILED: {exc}", file=sys.stderr)
+                rc = 1
+        return rc
 
     if args.rebuild and args.db.exists() and not args.dry_run:
         print(f"--rebuild: removing {args.db}")
@@ -829,7 +1102,7 @@ def main() -> int:
     try:
         init_schema(conn)
         for code in codes:
-            load_region(conn, code, dry_run=args.dry_run)
+            load_region(conn, code, dry_run=args.dry_run, use_cache=args.from_cache)
         if args.dry_run:
             print("\n--dry-run: no changes written")
             conn.rollback()
