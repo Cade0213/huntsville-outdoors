@@ -49,7 +49,25 @@
     </form>
   </header>
 
-  <div class="app" id="app">
+  <!-- Top-level sections. Distinct classes from the panel's own .tab strip inside Map Locator. -->
+  <nav class="site-tabs" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" class="site-tab" data-view="map" aria-selected="true" tabindex="0">
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
+          d="M9 3.5 3.5 6v14.5L9 18l6 2.5 5.5-2.5V3.5L15 6 9 3.5zM9 3.5V18M15 6v14.5"/>
+      </svg>
+      Map Locator
+    </button>
+    <button type="button" role="tab" class="site-tab" data-view="draws" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+          d="M12 3.5a8.5 8.5 0 108.5 8.5M12 8a4 4 0 104 4M12 12l8.5-8.5M17 3.5h3.5V7"/>
+      </svg>
+      Hunting Draws
+    </button>
+  </nav>
+
+  <div class="app view" id="app" data-view="map">
     <!-- Side panel: tabs for places / seasons / licenses. On phones it sits under the map. -->
     <aside class="panel" id="panel" aria-label="Results and details">
       <nav class="tabs" role="tablist">
@@ -175,6 +193,59 @@
     </main>
   </div>
 
+  <!-- HUNTING DRAWS -->
+  <section class="view draws-view" id="draws-view" data-view="draws" aria-label="Hunting draws" hidden>
+    <div class="draws-scroll">
+      <div class="draws-inner">
+        <div class="panel-heading">
+          <h2>Hunting Draws <span class="pill" data-draw-cycle></span></h2>
+          <p class="sub">Application deadlines, draw odds and cost for major limited-entry hunts across the U.S.</p>
+        </div>
+
+        <p class="stale-warning">
+          <strong>Sample data.</strong> These rows were last reviewed <span id="draw-reviewed"></span> and describe the
+          <span data-draw-cycle></span>. Deadlines, odds and fees change every year — confirm on the state agency page
+          linked in each card before you apply.
+        </p>
+
+        <div class="draw-controls">
+          <label>State <select id="draw-state" aria-label="Filter by state"></select></label>
+          <label>Species <select id="draw-species" aria-label="Filter by species"></select></label>
+          <label>Applicant
+            <select id="draw-residency" aria-label="Filter by residency">
+              <option value="all">Everyone</option>
+              <option value="nonresident">Nonresident</option>
+              <option value="resident">Resident</option>
+            </select>
+          </label>
+          <label class="draw-search">Search
+            <input type="search" id="draw-filter" placeholder="Elk, points, quota…" aria-label="Search draws" />
+          </label>
+          <button type="button" class="btn-secondary small" id="draw-reset">Reset</button>
+        </div>
+
+        <h3 class="mini-head">Deadlines by month</h3>
+        <div class="draw-months" id="draw-months" role="group" aria-label="Filter by deadline month"></div>
+
+        <div class="draw-headline">
+          <p id="draw-summary" aria-live="polite"></p>
+          <details class="map-key cost-legend">
+            <summary>Cost scale</summary>
+            <ul id="cost-legend-list"></ul>
+          </details>
+        </div>
+
+        <div class="draw-list" id="draw-list"></div>
+
+        <p class="fine-print">
+          <strong>Not official.</strong> Draw odds shown are rough, blended figures for orientation only — real odds
+          depend on the specific unit, weapon, season and how many points you hold. Several states shift their
+          deadlines by a few days each year. Always apply through the official state agency.
+        </p>
+      </div>
+    </div>
+  </section>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="states.js"></script>
   <script src="seasons.js"></script>
@@ -183,5 +254,7 @@
   <script src="resources.js"></script>
   <script src="calendar.js"></script>
   <script src="script.js"></script>
+  <script src="draws-data.js"></script>
+  <script src="draws.js"></script>
 </body>
 </html>
