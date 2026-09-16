@@ -76,7 +76,7 @@
             </div>
             <label class="check">
               <input type="checkbox" id="show-unconfirmed" checked />
-              <span>Include unconfirmed public lands &amp; ramps</span>
+              <span>Include unconfirmed public lands</span>
             </label>
           </div>
 
@@ -85,13 +85,8 @@
             <details class="map-key">
               <summary>Map key</summary>
               <ul>
-                <li><span class="key-pin hunting"></span>Hunting · checked</li>
-                <li><span class="key-pin fishing"></span>Fishing · checked</li>
-                <li><span class="key-dot hunting"></span>Hunting · unconfirmed</li>
-                <li><span class="key-dot fishing"></span>Fishing · unconfirmed</li>
-                <li><span class="key-dot both"></span>Hunting &amp; fishing</li>
-                <li><span class="key-pin hunting ring-open"></span>Season open today</li>
-                <li><span class="key-pin hunting ring-soon"></span>Opens within 30 days</li>
+                <li><span class="key-pin hunting"></span>Hunting land</li>
+                <li><span class="key-pin fishing"></span>Fishing access</li>
                 <li><span class="key-area"></span>Public land boundary</li>
               </ul>
             </details>
@@ -170,6 +165,9 @@
         </section>
       </div>
     </aside>
+
+    <div class="resizer" id="resizer" role="separator" aria-orientation="vertical" tabindex="0"
+         aria-label="Resize the panel and map" aria-valuemin="0" aria-valuemax="100"></div>
 
     <main class="map-area">
       <div id="map" aria-label="Map of public hunting and fishing areas"></div>

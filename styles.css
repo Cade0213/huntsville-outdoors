@@ -9,7 +9,6 @@
   --bark: #5a4632;
   --hunting: #c0621f;
   --fishing: #1f6fa3;
-  --both: #6a4c93;
   --open: #2e9e4f;
   --soon: #e0a100;
   --warn-bg: #fff4d6;
@@ -187,6 +186,7 @@ select {
 .btn-secondary { background: #fff; color: var(--forest-dark); border: 1px solid var(--line); }
 .btn-secondary:hover { background: var(--sand); }
 .btn-secondary.small { min-height: 34px; font-size: 0.85rem; padding: 0 12px; }
+.btn-secondary.icon-btn { width: 34px; min-width: 34px; height: 34px; padding: 0; }
 .block { display: flex; width: 100%; padding: 10px 14px; line-height: 1.3; }
 .link-btn {
   background: none;
@@ -204,7 +204,7 @@ select {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--panel-w) minmax(0, 1fr);
+  grid-template-columns: var(--panel-w) 6px minmax(0, 1fr);
 }
 .panel {
   display: flex;
@@ -223,6 +223,34 @@ select {
   padding: 12px 16px 24px;
 }
 .map-area { position: relative; min-height: 0; }
+
+/* Drag handle between the panel and the map. */
+.resizer {
+  position: relative;
+  z-index: 3;
+  background: var(--line-soft);
+  border-left: 1px solid var(--line);
+  cursor: col-resize;
+  touch-action: none;
+}
+.resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 -5px 0 0; /* a wider grab area, extended into the map side only */
+}
+.resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: var(--line);
+}
+.resizer:hover, .app.is-resizing .resizer { background: var(--moss); }
+.app.is-resizing { user-select: none; }
 #map { position: absolute; inset: 0; background: #e8e4d8; }
 .map-toggle { display: none; }
 
@@ -324,7 +352,7 @@ select {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
   line-height: 1.9;
 }
-.key-pin, .key-dot, .key-area {
+.key-pin, .key-area {
   display: inline-block;
   width: 13px;
   height: 13px;
@@ -335,12 +363,6 @@ select {
 .key-pin { border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3); }
 .key-pin.hunting { background: var(--hunting); }
 .key-pin.fishing { background: var(--fishing); }
-.key-pin.ring-open { box-shadow: 0 0 0 3px var(--open); }
-.key-pin.ring-soon { box-shadow: 0 0 0 3px var(--soon); }
-.key-dot { background: #fff; border: 3px solid; }
-.key-dot.hunting { border-color: var(--hunting); }
-.key-dot.fishing { border-color: var(--fishing); }
-.key-dot.both { border-color: var(--both); }
 .key-area { border-radius: 3px; background: rgba(192, 98, 31, 0.15); border: 1.5px solid var(--hunting); }
 
 /* ---------- Results ---------- */
@@ -368,13 +390,11 @@ select {
   height: 14px;
   margin-top: 3px;
   border-radius: 50%;
-  background: #fff;
-  border: 3px solid var(--hunting);
+  background: var(--hunting);
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
-.result-icon.fishing { border-color: var(--fishing); }
-.result-icon.both { border-color: var(--both); }
-.result-icon.solid { background: var(--hunting); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
-.result-icon.solid.fishing { background: var(--fishing); }
+.result-icon.fishing { background: var(--fishing); }
 .result-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .result-name { font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .result-sub { font-size: 0.8rem; color: var(--muted); }
@@ -521,10 +541,7 @@ select {
 }
 .pin.hunting { background: var(--hunting); }
 .pin.fishing { background: var(--fishing); }
-.pin.both { background: var(--both); }
 .pin.home { background: var(--forest-dark); width: 16px; height: 16px; box-shadow: 0 0 0 3px rgba(47, 74, 54, 0.35); }
-.pin.status-open { box-shadow: 0 0 0 3px var(--open), 0 1px 5px rgba(0, 0, 0, 0.5); }
-.pin.status-soon { box-shadow: 0 0 0 3px var(--soon), 0 1px 5px rgba(0, 0, 0, 0.5); }
 .pin.selected { transform: scale(1.35); }
 .leaflet-tooltip { font-weight: 600; }
 
@@ -747,6 +764,7 @@ select {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 42fr) minmax(0, 58fr);
   }
+  .resizer { display: none; }
   .map-area { grid-row: 1; }
   .panel { grid-row: 2; border-right: 0; border-top: 1px solid var(--line); box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.1); }
   .app.map-expanded { grid-template-rows: minmax(0, 1fr) auto; }

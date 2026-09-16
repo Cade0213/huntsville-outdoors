@@ -3,7 +3,7 @@
 //   City search      Photon (OpenStreetMap geocoder by Komoot), Nominatim fallback on submit only
 //   Public lands     USGS Protected Areas Database (PAD-US) – Public Access layer
 //   State lines      U.S. Census TIGERweb – used to show the right state agencies for each result
-//   Ramps & shops    OpenStreetMap via the Overpass API (community mirrors; best-effort)
+//   Fishing & shops  OpenStreetMap via the Overpass API (community mirrors; best-effort)
 //
 // PAD-US says a parcel is public and whether access is open or restricted. It does NOT say whether
 // hunting or fishing is allowed, so everything from here is labeled "unconfirmed" in the UI.
@@ -288,9 +288,16 @@ async function fetchPublicLands(center, radiusMi, signal) {
     spatialRel: "esriSpatialRelIntersects",
     outFields: "Unit_Nm,DesTp_Desc,MngNm_Desc,MngTp_Desc,Pub_Access,GIS_Acres",
     returnGeometry: true,
-    // Simplify harder for big searches: western national forests can return 100k+ vertices otherwise.
-    maxAllowableOffset: Math.max(0.001, radiusMi / 8000),
-    geometryPrecision: 4,
+    // How far a generalized edge may sit from the true boundary, in degrees (~111 km each).
+    // Sized to about one screen pixel at the zoom each radius is usually read at, so boundaries
+    // follow the real parcel lines instead of being cut into long chords. The old blanket
+    // radiusMi/8000 worked out to ~700 m at the default 50 mi, which is ~44 px at zoom 13.
+    // 100 mi stays coarse on purpose: it opens near zoom 6.5 (~1.2 km/px), where anything finer
+    // is sub-pixel, and those searches can pull 179 parcels / 130k+ vertices in forested states.
+    maxAllowableOffset: radiusMi <= 10 ? 0.00015 : radiusMi <= 25 ? 0.0002 : radiusMi <= 50 ? 0.0004 : 0.006,
+    // 5 decimal places is ~1 m. At 4 (~11 m) coordinates snapped to a grid coarser than a pixel
+    // at zoom 14, which stair-stepped the edges no matter how fine the tolerance above was.
+    geometryPrecision: 5,
     outSR: 4326,
     orderByFields: "GIS_Acres DESC",
     resultRecordCount: 400,
@@ -355,7 +362,7 @@ async function fetchPublicLands(center, radiusMi, signal) {
   });
 }
 
-// ---------------- Boat ramps, fishing piers & shops (OpenStreetMap) ----------------
+// ---------------- Fishing piers, fishing spots & shops (OpenStreetMap) ----------------
 
 // Community Overpass mirrors are often overloaded. Start with the first; if it hasn't answered in
 // HEDGE_MS (or fails), also try the next one. The first good response wins and the rest are cancelled.
@@ -422,7 +429,6 @@ async function fetchOsmFeatures(center, radiusMi, signal) {
   const around = `(around:${meters},${center[0]},${center[1]})`;
   const query = `[out:json][timeout:25];
 (
-  nwr["leisure"="slipway"]${around};
   nwr["leisure"="fishing"]${around};
   nwr["man_made"="pier"]["fishing"~"^(yes|designated)$"]${around};
   nwr["shop"~"^(hunting|weapons|fishing|outdoor)$"](around:${shopMeters},${center[0]},${center[1]});
@@ -458,7 +464,7 @@ out center tags 2000;`;
 
     // Guides and outfitters sometimes tag their business as a fishing spot.
     if (t.name && /\b(llc|inc|outfitters?|guides?|guide service|charters?|lodge|club)\b/i.test(t.name)) continue;
-    const typeLabel = t.leisure === "slipway" ? "Boat ramp" : t.man_made === "pier" ? "Fishing pier" : "Fishing spot";
+    const typeLabel = t.man_made === "pier" ? "Fishing pier" : "Fishing spot";
     const details = [
       t.operator && `Operated by ${t.operator}.`,
       t.fee === "yes" && "A fee may be charged.",
@@ -485,7 +491,7 @@ out center tags 2000;`;
   return { water: dedupeNearby(water, 0.08), shops: dedupeNearby(shops, 0.05) };
 }
 
-// Several slipways often get mapped at one ramp; keep one per name within `miles`.
+// The same spot is often mapped more than once; keep one per name within `miles`.
 function dedupeNearby(items, miles) {
   const kept = [];
   for (const item of items.sort((a, b) => a.distanceMi - b.distanceMi)) {

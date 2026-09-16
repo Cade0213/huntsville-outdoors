@@ -14,7 +14,7 @@ function disclaimerText(stateAbbrev) {
   return `This is not an official source. Always verify current seasons, permits, regulations, and access with the ${agencyForDisclaimer(stateAbbrev).name} and the managing agency. Regulations change.`;
 }
 
-const COLORS = { hunting: "#c0621f", fishing: "#1f6fa3", both: "#6a4c93" };
+const COLORS = { hunting: "#c0621f", fishing: "#1f6fa3" };
 const SOON_DAYS = 30;
 const LIST_LIMIT = 250;
 
@@ -57,8 +57,9 @@ function formatMiles(mi) {
   return `${Math.round(mi)} mi`;
 }
 
+// Map and list indicators use one colour per activity: anything huntable is orange, the rest blue.
 function activityKey(place) {
-  return place.activities.length > 1 ? "both" : place.activities[0];
+  return place.activities.includes("hunting") ? "hunting" : "fishing";
 }
 
 function seasonsAvailable() {
@@ -212,15 +213,13 @@ function markerFor(place, selected) {
   const key = activityKey(place);
   const color = COLORS[key];
   if (place.source === "curated") {
-    const status = placeSeasonStatus(place);
     return L.marker(place.point, {
       title: place.name,
       riseOnHover: true,
       zIndexOffset: selected ? 1000 : 0,
-      opacity: status === "none" ? 0.45 : 1,
       icon: L.divIcon({
         className: "",
-        html: `<div class="pin ${key} ${status ? `status-${status}` : ""} ${selected ? "selected" : ""}"></div>`,
+        html: `<div class="pin ${key} ${selected ? "selected" : ""}"></div>`,
         iconSize: [22, 22],
         iconAnchor: [11, 11],
       }),
@@ -229,9 +228,9 @@ function markerFor(place, selected) {
   return L.circleMarker(place.point, {
     bubblingMouseEvents: false,
     radius: selected ? 9 : 6,
-    color,
-    weight: selected ? 4 : 3,
-    fillColor: "#fff",
+    color: "#fff",
+    weight: 2,
+    fillColor: color,
     fillOpacity: 1,
   });
 }
@@ -321,9 +320,9 @@ function renderList() {
 
   const lines = [];
   if (loading.lands) lines.push(`<p class="loading-line"><span class="spinner"></span>Searching federal &amp; state public lands…</p>`);
-  if (loading.osm) lines.push(`<p class="loading-line"><span class="spinner"></span>Finding boat ramps &amp; fishing piers…</p>`);
+  if (loading.osm) lines.push(`<p class="loading-line"><span class="spinner"></span>Finding fishing piers &amp; access spots…</p>`);
   if (errors.lands) lines.push(`<p class="notice">Couldn't load public lands (${escapeHtml(errors.lands)}). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
-  if (errors.osm) lines.push(`<p class="notice">Boat ramps & shops are temporarily unavailable (OpenStreetMap servers are busy). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
+  if (errors.osm) lines.push(`<p class="notice">Fishing spots & shops are temporarily unavailable (OpenStreetMap servers are busy). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
   if (!loading.lands && !loading.osm && !places.length && !errors.lands)
     lines.push(`<p class="notice">Nothing matches these filters. Try a larger radius, “Both”, or clear the name filter.</p>`);
   $("results-status").innerHTML = lines.join("");
@@ -335,7 +334,7 @@ function renderList() {
         (p) => `
       <li>
         <button type="button" class="result ${p.id === appState.selectedId ? "is-selected" : ""}" data-id="${escapeHtml(p.id)}">
-          <span class="result-icon ${activityKey(p)} ${p.source === "curated" ? "solid" : ""}" aria-hidden="true"></span>
+          <span class="result-icon ${activityKey(p)}" aria-hidden="true"></span>
           <span class="result-main">
             <span class="result-name">${escapeHtml(p.name)}</span>
             <span class="result-sub">${escapeHtml(p.typeLabel)}${p.state && p.state !== search.state ? ` · ${p.state}` : ""}${p.outsideRadius ? ` · outside ${search.radius}-mi radius` : ""}</span>
@@ -378,7 +377,14 @@ function seasonsBlock(place) {
     <section class="detail-seasons">
       <h3>${SEASON_YEAR} seasons <span class="sub">as of ${formatDay(TODAY)}</span></h3>
       <ul>${rows}</ul>
-      <button type="button" class="btn-secondary small" data-cal-scope="${place.seasonScope}">Open full season calendar</button>
+      <button type="button" class="btn-secondary small icon-btn" data-cal-scope="${place.seasonScope}"
+        aria-label="Open full season calendar" title="Open full season calendar">
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
+          <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+            d="M7 3v3M17 3v3M4 9h16M5.5 5.5h13a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 19V7a1.5 1.5 0 011.5-1.5z"/>
+          <rect x="7.5" y="12" width="3" height="3" rx="0.6" fill="currentColor"/>
+        </svg>
+      </button>
     </section>`;
 }
 
@@ -567,7 +573,7 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
       if (stale()) return;
       await Promise.allSettled([statesTask, landsTask]);
       if (stale()) return;
-      // Skip mapped ramps that duplicate a hand-checked spot or a same-named public land (e.g. a fishing access site).
+      // Skip mapped spots that duplicate a hand-checked place or a same-named public land (e.g. a fishing access site).
       const curatedFishing = appState.places.filter((p) => p.source === "curated" && p.activities.includes("fishing"));
       const lands = appState.places.filter((p) => p.source === "padus");
       const fresh = water.filter((w) => {
@@ -796,6 +802,93 @@ $("disclaimer-toggle").addEventListener("click", () => {
   $("disclaimer-toggle").setAttribute("aria-expanded", String(open));
   $("disclaimer-toggle").textContent = open ? "Less" : "More";
 });
+
+// ---------- Resizable split between the panel and the map ----------
+// The handle drives --panel-w on #app (the grid's first column). Only the desktop layout uses it;
+// on phones the panel sits under the map and the handle is hidden.
+const SPLIT_KEY = "plw.splitRatio";
+const MIN_PANEL_W = 300;
+const MIN_MAP_W = 320;
+const appEl = $("app");
+const resizerEl = $("resizer");
+
+const splitActive = () => getComputedStyle(resizerEl).display !== "none";
+
+function storedSplitRatio() {
+  try {
+    const v = parseFloat(localStorage.getItem(SPLIT_KEY));
+    return v > 0 && v < 1 ? v : null;
+  } catch {
+    // Storage can be unavailable (private mode, some file:// contexts); the split just isn't remembered.
+    return null;
+  }
+}
+
+function reportSplit(width) {
+  resizerEl.setAttribute("aria-valuenow", String(Math.round((width / appEl.clientWidth) * 100)));
+}
+
+// Sets the panel width in px, clamped so neither side can collapse. `save` records the ratio.
+function applySplit(px, save = false) {
+  const total = appEl.clientWidth;
+  const max = total - MIN_MAP_W - resizerEl.offsetWidth;
+  if (!total || max < MIN_PANEL_W) return; // window too narrow to honour both minimums
+  const width = Math.min(Math.max(px, MIN_PANEL_W), max);
+  appEl.style.setProperty("--panel-w", `${Math.round(width)}px`);
+  reportSplit(width);
+  if (save) {
+    try {
+      localStorage.setItem(SPLIT_KEY, String(width / total));
+    } catch {}
+  }
+}
+
+function restoreSplit() {
+  if (!splitActive()) {
+    appEl.style.removeProperty("--panel-w");
+    return;
+  }
+  const panelW = $("panel").getBoundingClientRect().width;
+  const ratio = storedSplitRatio();
+  if (ratio != null) applySplit(ratio * appEl.clientWidth);
+  // No stored ratio (storage blocked) but the user has dragged: re-clamp the live width, or a
+  // wide panel would stay frozen and squeeze the map under its minimum in a narrower window.
+  else if (appEl.style.getPropertyValue("--panel-w")) applySplit(panelW);
+  else reportSplit(panelW); // untouched: leave the CSS default responsive
+}
+
+resizerEl.addEventListener("pointerdown", (e) => {
+  if (!splitActive()) return;
+  e.preventDefault();
+  resizerEl.setPointerCapture(e.pointerId);
+  appEl.classList.add("is-resizing");
+});
+
+resizerEl.addEventListener("pointermove", (e) => {
+  if (!appEl.classList.contains("is-resizing")) return;
+  applySplit(e.clientX - appEl.getBoundingClientRect().left);
+});
+
+const endResize = (e) => {
+  if (!appEl.classList.contains("is-resizing")) return;
+  appEl.classList.remove("is-resizing");
+  try {
+    resizerEl.releasePointerCapture(e.pointerId);
+  } catch {} // already released, e.g. on a cancelled drag
+  applySplit($("panel").getBoundingClientRect().width, true);
+};
+resizerEl.addEventListener("pointerup", endResize);
+resizerEl.addEventListener("pointercancel", endResize);
+
+resizerEl.addEventListener("keydown", (e) => {
+  const step = e.key === "ArrowLeft" ? -24 : e.key === "ArrowRight" ? 24 : 0;
+  if (!step || !splitActive()) return;
+  e.preventDefault();
+  applySplit($("panel").getBoundingClientRect().width + step, true);
+});
+
+window.addEventListener("resize", restoreSplit);
+restoreSplit();
 
 // ---------- Start ----------
 initCalendar();
