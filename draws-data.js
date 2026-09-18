@@ -31,7 +31,7 @@
 //   url         official page to verify everything above
 
 const DRAW_CYCLE = "2027 season";
-const DRAW_DATA_REVIEWED = "2026-09-15"; // last date a human checked these rows
+const DRAW_DATA_REVIEWED = "2026-09-17"; // last date a human checked these rows
 
 // The money-sign scale. `max` is a rough all-in figure for a nonresident: application fee +
 // licence + tag. It deliberately excludes travel, gear and guide fees except where a state
@@ -68,7 +68,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Preference points", "Special vs regular draw"],
     agency: "Wyoming Game & Fish",
-    url: "https://wgfd.wyo.gov/hunting/apply-for-a-license",
+    url: "https://wgfd.wyo.gov/licenses-applications/application-dates-deadlines",
   },
   {
     id: "wy-deer-antelope-nr",
@@ -84,7 +84,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Preference points", "Region-based"],
     agency: "Wyoming Game & Fish",
-    url: "https://wgfd.wyo.gov/hunting/apply-for-a-license",
+    url: "https://wgfd.wyo.gov/licenses-applications/application-dates-deadlines",
   },
   {
     id: "wy-sheep-moose-nr",
@@ -100,7 +100,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Once-in-a-lifetime", "Guide required in wilderness"],
     agency: "Wyoming Game & Fish",
-    url: "https://wgfd.wyo.gov/hunting/apply-for-a-license",
+    url: "https://wgfd.wyo.gov/licenses-applications/application-dates-deadlines",
   },
 
   // ---------------- Colorado ----------------
@@ -118,7 +118,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Preference points", "Some OTC units"],
     agency: "Colorado Parks & Wildlife",
-    url: "https://cpw.state.co.us/thingstodo/Pages/BigGame.aspx",
+    url: "https://cpw.state.co.us/activities/hunting/big-game/primary-draw",
   },
   {
     id: "co-deer-primary",
@@ -134,7 +134,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Draw only", "Preference points"],
     agency: "Colorado Parks & Wildlife",
-    url: "https://cpw.state.co.us/thingstodo/Pages/BigGame.aspx",
+    url: "https://cpw.state.co.us/activities/hunting/big-game/primary-draw",
   },
   {
     id: "co-pronghorn",
@@ -150,7 +150,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Preference points"],
     agency: "Colorado Parks & Wildlife",
-    url: "https://cpw.state.co.us/thingstodo/Pages/BigGame.aspx",
+    url: "https://cpw.state.co.us/activities/hunting/big-game/primary-draw",
   },
 
   // ---------------- Montana ----------------
@@ -168,7 +168,7 @@ const HUNTING_DRAWS = [
     points: "bonus",
     notes: ["Quota capped", "Elk + deer combo"],
     agency: "Montana FWP",
-    url: "https://fwp.mt.gov/hunt/licenses",
+    url: "https://fwp.mt.gov/buyandapply/hunting-licenses/application-drawing-dates",
   },
   {
     id: "mt-sheep-moose-goat",
@@ -184,7 +184,7 @@ const HUNTING_DRAWS = [
     points: "bonus",
     notes: ["Once-in-a-lifetime", "Squared bonus"],
     agency: "Montana FWP",
-    url: "https://fwp.mt.gov/hunt/licenses",
+    url: "https://fwp.mt.gov/buyandapply/hunting-licenses/application-drawing-dates",
   },
 
   // ---------------- New Mexico ----------------
@@ -202,7 +202,7 @@ const HUNTING_DRAWS = [
     points: "none",
     notes: ["Pure random", "Outfitter pool"],
     agency: "New Mexico Game & Fish",
-    url: "https://www.wildlife.state.nm.us/hunting/",
+    url: "https://wildlife.dgf.nm.gov/hunting/applications-and-draw-information/",
   },
   {
     id: "nm-oryx",
@@ -218,7 +218,7 @@ const HUNTING_DRAWS = [
     points: "none",
     notes: ["Pure random", "Military range access"],
     agency: "New Mexico Game & Fish",
-    url: "https://www.wildlife.state.nm.us/hunting/",
+    url: "https://wildlife.dgf.nm.gov/hunting/applications-and-draw-information/",
   },
 
   // ---------------- Arizona ----------------
@@ -236,13 +236,13 @@ const HUNTING_DRAWS = [
     points: "bonus",
     notes: ["Bonus points", "10% nonresident cap"],
     agency: "Arizona Game & Fish",
-    url: "https://www.azgfd.com/hunting/draw-information/",
+    url: "https://www.azgfd.com/hunting/hunt-draw-and-licenses/big-game-draw/",
   },
   {
     id: "az-deer-fall",
     state: "AZ",
     species: "Mule Deer",
-    hunt: "Fall Draw — Deer, Sheep, Bear, Turkey",
+    hunt: "Fall Draw — Deer, Turkey, Javelina, Sheep, Bison",
     deadline: "2027-06-08",
     opens: "2027-05-05",
     odds: { pct: 0.3 },
@@ -252,7 +252,25 @@ const HUNTING_DRAWS = [
     points: "bonus",
     notes: ["Bonus points", "Multi-species"],
     agency: "Arizona Game & Fish",
-    url: "https://www.azgfd.com/hunting/draw-information/",
+    url: "https://www.azgfd.com/hunting/hunt-draw-and-licenses/big-game-draw/",
+  },
+  {
+    // Deadline from the AZGFD Big Game Draw page, checked 2026-09-17. Odds and cost left
+    // unset because AZGFD publishes them per hunt, not as one figure.
+    id: "az-spring",
+    state: "AZ",
+    species: "Wild Turkey",
+    hunt: "Spring Draw — Turkey, Javelina, Bison, Bear",
+    deadline: "2026-10-06",
+    opens: null,
+    odds: null,
+    oddsNote: "AZGFD publishes draw odds hunt by hunt; check the draw information booklet.",
+    cost: null,
+    residency: "both",
+    points: "bonus",
+    notes: ["Bonus points", "Multi-species"],
+    agency: "Arizona Game & Fish",
+    url: "https://www.azgfd.com/hunting/hunt-draw-and-licenses/big-game-draw/",
   },
 
   // ---------------- Utah ----------------
@@ -270,7 +288,7 @@ const HUNTING_DRAWS = [
     points: "hybrid",
     notes: ["50% random", "Preference + bonus"],
     agency: "Utah DWR",
-    url: "https://wildlife.utah.gov/hunting-in-utah.html",
+    url: "https://wildlife.utah.gov/draw",
   },
   {
     id: "ut-oial",
@@ -286,7 +304,7 @@ const HUNTING_DRAWS = [
     points: "bonus",
     notes: ["Once-in-a-lifetime", "Bonus points"],
     agency: "Utah DWR",
-    url: "https://wildlife.utah.gov/hunting-in-utah.html",
+    url: "https://wildlife.utah.gov/draw",
   },
 
   // ---------------- Nevada ----------------
@@ -304,7 +322,7 @@ const HUNTING_DRAWS = [
     points: "squared",
     notes: ["Squared bonus", "Quota tight"],
     agency: "Nevada Department of Wildlife",
-    url: "https://www.ndow.org/hunt/",
+    url: "https://www.ndow.org/apply-buy/apply-buy-hunting/",
   },
 
   // ---------------- Idaho ----------------
@@ -322,7 +340,7 @@ const HUNTING_DRAWS = [
     points: "none",
     notes: ["Pure random", "OTC alternative"],
     agency: "Idaho Fish & Game",
-    url: "https://idfg.idaho.gov/hunt/controlled",
+    url: "https://idfg.idaho.gov/licenses/controlled/apply",
   },
   {
     id: "id-moose-sheep-goat",
@@ -338,7 +356,7 @@ const HUNTING_DRAWS = [
     points: "none",
     notes: ["Once-in-a-lifetime", "Pure random"],
     agency: "Idaho Fish & Game",
-    url: "https://idfg.idaho.gov/hunt/controlled",
+    url: "https://idfg.idaho.gov/licenses/controlled/apply",
   },
 
   // ---------------- Oregon ----------------
@@ -374,17 +392,19 @@ const HUNTING_DRAWS = [
     points: "none",
     notes: ["Pure random", "Guide required for sheep/goat/brown bear"],
     agency: "Alaska Department of Fish & Game",
-    url: "https://www.adfg.alaska.gov/index.cfm?adfg=huntlicense.drawingsupplemental",
+    url: "https://www.adfg.alaska.gov/index.cfm?adfg=huntlicense.draw",
   },
 
   // ---------------- Midwest & East ----------------
   {
+    // Dates follow Iowa DNR's published rule (first Saturday in May through first Sunday in
+    // June), checked 2026-09-17. Odds and cost are still unverified sample values.
     id: "ia-deer-nr",
     state: "IA",
     species: "Whitetail Deer",
     hunt: "Nonresident Deer (any-sex)",
-    deadline: "2027-06-05",
-    opens: "2027-04-01",
+    deadline: "2027-06-06",
+    opens: "2027-05-01",
     odds: { pct: 0.35 },
     oddsNote: "Zone-dependent; the famous southern zones take multiple years of points.",
     cost: 2,
@@ -392,7 +412,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Preference points", "Nonresident quota"],
     agency: "Iowa DNR",
-    url: "https://www.iowadnr.gov/Hunting/Deer-Hunting",
+    url: "https://www.iowadnr.gov/things-do/hunting-trapping/hunting-licenses-fees/nonresident-hunting-licenses",
   },
   {
     id: "ks-deer-nr",
@@ -408,7 +428,7 @@ const HUNTING_DRAWS = [
     points: "preference",
     notes: ["Unit-specific", "Preference points"],
     agency: "Kansas Wildlife & Parks",
-    url: "https://ksoutdoors.com/Hunting/Applications-and-Fees",
+    url: "https://www.ksoutdoors.gov/outdoor-activities/hunting-in-kansas/what-to-hunt/big-game/deer",
   },
   {
     id: "il-firearm-deer",
@@ -427,12 +447,14 @@ const HUNTING_DRAWS = [
     url: "https://dnr.illinois.gov/hunting/deer.html",
   },
   {
+    // Window from KDFWR's elk regs page, checked 2026-09-17: the 2027 drawing opens Aug 1
+    // and runs through Apr 30. Odds and cost are still unverified sample values.
     id: "ky-elk",
     state: "KY",
     species: "Elk",
     hunt: "Elk Quota Hunt",
     deadline: "2027-04-30",
-    opens: "2027-03-01",
+    opens: "2026-08-01",
     odds: { pct: 0.005 },
     oddsNote: "Roughly 1 in 200 — one of the largest applicant pools east of the Mississippi.",
     cost: 2,
@@ -440,7 +462,7 @@ const HUNTING_DRAWS = [
     points: "none",
     notes: ["Pure random", "Open to nonresidents"],
     agency: "Kentucky Fish & Wildlife",
-    url: "https://fw.ky.gov/Hunt/Pages/Elk-Hunting.aspx",
+    url: "https://fw.ky.gov/Hunt/Pages/Elk-Hunting-Regs.aspx",
   },
   {
     id: "pa-elk",
@@ -456,7 +478,7 @@ const HUNTING_DRAWS = [
     points: "bonus",
     notes: ["Cheap to apply", "Bonus points"],
     agency: "Pennsylvania Game Commission",
-    url: "https://www.pgc.pa.gov/HuntTrap/Elk/Pages/default.aspx",
+    url: "https://www.pa.gov/services/pgc/apply-for-an-elk-license",
   },
   {
     id: "me-moose",
@@ -472,7 +494,7 @@ const HUNTING_DRAWS = [
     points: "bonus",
     notes: ["Bonus points", "Nonresident limited"],
     agency: "Maine IFW",
-    url: "https://www.maine.gov/ifw/hunting-trapping/moose/lottery.html",
+    url: "https://www.maine.gov/ifw/hunting-trapping/hunting/species/moose/moose-permit-drawing.html",
   },
   {
     id: "wi-bear",
