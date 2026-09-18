@@ -632,6 +632,9 @@ body.on-draws .search { display: none; }
   margin: 0 0 12px;
 }
 .scope-summary a { font-weight: 700; }
+.scope-varies { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.scope-varies li { background: #fff; border-radius: 6px; padding: 6px 8px; }
+.scope-varies a { font-weight: 700; margin-left: 4px; }
 .stale-warning { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 8px; padding: 8px 10px; font-weight: 600; }
 
 .today-card {

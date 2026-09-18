@@ -122,15 +122,15 @@
           <div id="cal-empty" hidden></div>
           <div id="cal-content">
             <div class="panel-heading">
-              <h2>Season Calendar <span class="pill">2026–27</span></h2>
-              <p class="sub">Openings and closings around today · North Alabama</p>
+              <h2>Season Calendar <span class="pill" data-cal-year></span></h2>
+              <p class="sub">Openings and closings around today · <span data-cal-area></span></p>
             </div>
             <div class="cal-controls">
               <label>Area <select id="cal-scope"></select></label>
               <label>Game <select id="cal-game" class="game-select"></select></label>
             </div>
             <p class="stale-warning" id="stale-warning" hidden>
-              Today is outside the 2026–27 season year these dates cover. Check Outdoor Alabama for current dates.
+              Today is outside the season year these dates cover. Check the official regulations link below for current dates.
             </p>
             <p class="scope-summary" id="scope-summary"></p>
 
@@ -155,11 +155,7 @@
               <div class="day-detail" id="day-detail" aria-live="polite"></div>
             </div>
 
-            <p class="fine-print">
-              <strong>Not official.</strong> Dates are summarized from ADCNR's 2026–27 season pages, WMA AREA permits,
-              and the Wheeler NWR hunt permit. Bag limits, legal weapons, zone boundaries, quota hunts and hunt-day
-              restrictions are not fully listed. ADCNR notes federal waterfowl frameworks were not final at printing.
-            </p>
+            <p class="fine-print" id="cal-fine-print"></p>
           </div>
         </section>
 

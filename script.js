@@ -62,9 +62,26 @@ function activityKey(place) {
   return place.activities.includes("hunting") ? "hunting" : "fishing";
 }
 
+// True only when `search` is inside the hand-checked North Alabama area — gates the detailed
+// per-place season badges (script.js) which only exist for the 4 North AL WMA/refuge scopes.
+function detailScopeAvailable(search = appState.search) {
+  return search.state === SEASON_COVERAGE.state && milesBetween(search.center, SEASON_COVERAGE.center) <= SEASON_COVERAGE.radiusMi;
+}
+
+// Ordered season-calendar scope ids to offer for a search: the North AL detail scopes inside that
+// area, otherwise the searched state's statewide scope when one exists. Never both — the detailed
+// North AL data stands in for Alabama's statewide entry there, exactly as before this tier existed.
+function scopesForSearch(search) {
+  if (!search) return [];
+  if (detailScopeAvailable(search)) {
+    return Object.keys(SEASON_SCOPES).filter((id) => SEASON_SCOPES[id].tier === "detail");
+  }
+  const swId = search.state ? `${search.state}-statewide` : null;
+  return swId && SEASON_SCOPES[swId] ? [swId] : [];
+}
+
 function seasonsAvailable() {
-  const s = appState.search;
-  return s.state === SEASON_COVERAGE.state && milesBetween(s.center, SEASON_COVERAGE.center) <= SEASON_COVERAGE.radiusMi;
+  return scopesForSearch(appState.search).length > 0;
 }
 
 function curatedTypeLabel(loc) {
@@ -114,7 +131,7 @@ function selectedGamesList() {
 }
 
 function placeSeasonStatus(place) {
-  if (!place.seasonScope || !seasonsAvailable()) return null;
+  if (!place.seasonScope || !detailScopeAvailable()) return null;
   const statuses = selectedGamesList().map((g) => gameStatus(place.seasonScope, g, TODAY));
   if (statuses.some((s) => s.kind === "open")) return "open";
   if (statuses.some((s) => s.kind === "upcoming" && daysBetween(TODAY, s.date) <= SOON_DAYS)) return "soon";
@@ -137,6 +154,8 @@ function statusText(scopeId, game) {
     }
     case "closed":
       return `<span class="st st-closed">Closed</span> for ${SEASON_YEAR}`;
+    case "varies":
+      return `<span class="st st-closed">Varies</span> ${escapeHtml(st.seasons[0].note || "check the official source")}`;
     default:
       return `<span class="st st-none">No season here</span>`;
   }
@@ -380,7 +399,7 @@ function landNote(place) {
 
 function seasonsBlock(place) {
   if (!place.seasonScope) return "";
-  if (!seasonsAvailable())
+  if (!detailScopeAvailable())
     return `<p class="notice">Season dates are only shown when you search inside ${SEASON_COVERAGE.label}.</p>`;
   const rows = selectedGamesList()
     .map(
