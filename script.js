@@ -160,7 +160,6 @@ function curatedPlaces(center, radius) {
     return {
       ...loc,
       source: "curated",
-      tier: "verified",
       polygons,
       point,
       typeLabel: curatedTypeLabel(loc),
@@ -321,11 +320,6 @@ function renderSearchLayer() {
 }
 
 // ---------- Results list ----------
-function trustBadge(place) {
-  if (place.source === "curated") return `<span class="badge verified" title="Hand-checked against official sources">Checked</span>`;
-  return `<span class="badge unconfirmed" title="From public data — rules not confirmed">Unconfirmed</span>`;
-}
-
 function activityChips(place) {
   return place.activities.map((a) => `<span class="act act-${a}">${a === "hunting" ? "Hunt" : "Fish"}</span>`).join("");
 }
@@ -333,12 +327,10 @@ function activityChips(place) {
 function renderList() {
   const places = visiblePlaces();
   const { search, loading, errors } = appState;
-  const curatedCount = places.filter((p) => p.source === "curated").length;
 
   $("tab-count").textContent = places.length ? places.length : "";
   $("results-summary").innerHTML = places.length
-    ? `<strong>${places.length}</strong> place${places.length === 1 ? "" : "s"} within ${search.radius} mi of <strong>${escapeHtml(search.label)}</strong>` +
-      (curatedCount ? ` · ${curatedCount} checked` : "")
+    ? `<strong>${places.length}</strong> place${places.length === 1 ? "" : "s"} within ${search.radius} mi of <strong>${escapeHtml(search.label)}</strong>`
     : `No places yet within ${search.radius} mi of <strong>${escapeHtml(search.label)}</strong>`;
 
   const lines = [];
@@ -361,7 +353,7 @@ function renderList() {
           <span class="result-main">
             <span class="result-name">${escapeHtml(p.name)}</span>
             <span class="result-sub">${escapeHtml(p.typeLabel)}${p.state && p.state !== search.state ? ` · ${p.state}` : ""}${p.outsideRadius ? ` · outside ${search.radius}-mi radius` : ""}</span>
-            <span class="result-tags">${activityChips(p)}${trustBadge(p)}${statusChip(p)}</span>
+            <span class="result-tags">${activityChips(p)}${statusChip(p)}</span>
           </span>
           <span class="result-dist">${formatMiles(p.distanceMi)}</span>
         </button>
@@ -425,12 +417,8 @@ function renderDetail(place) {
   ].filter(Boolean);
 
   const actions = [];
-  if (place.source === "curated") {
-    actions.push(`<a class="btn-primary block" href="${escapeHtml(place.sourceUrl)}" target="_blank" rel="noopener">View official source &rarr;</a>`);
-    if (place.mapUrl) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.mapUrl)}" target="_blank" rel="noopener">Official map &amp; rules</a>`);
-  } else if (agency) {
-    actions.push(`<a class="btn-primary block" href="${escapeHtml(agency.url)}" target="_blank" rel="noopener">Check rules: ${escapeHtml(agency.name)} &rarr;</a>`);
-  }
+  const officialUrl = place.mapUrl || place.sourceUrl || (agency && agency.url);
+  if (officialUrl) actions.push(`<a class="btn-primary block" href="${escapeHtml(officialUrl)}" target="_blank" rel="noopener">Official Map &amp; Rules &rarr;</a>`);
   actions.push(`<a class="btn-secondary" href="https://www.google.com/maps/dir/?api=1&destination=${place.point[0]},${place.point[1]}" target="_blank" rel="noopener">Directions</a>`);
   if (place.osmUrl) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.osmUrl)}" target="_blank" rel="noopener">View on OpenStreetMap</a>`);
   actions.push(`<button type="button" class="btn-secondary" data-zoom="${escapeHtml(place.id)}">Zoom to</button>`);
@@ -439,7 +427,7 @@ function renderDetail(place) {
   $("place-detail").innerHTML = `
     <div class="detail-nav"><button type="button" class="back-btn" data-back>&larr; All places</button></div>
     <header class="detail-head">
-      <div class="result-tags">${activityChips(place)}${trustBadge(place)}${statusChip(place)}</div>
+      <div class="result-tags">${activityChips(place)}${statusChip(place)}</div>
       <h2>${escapeHtml(place.name)}</h2>
       <p class="detail-type">${escapeHtml(place.typeLabel)}</p>
     </header>
@@ -452,7 +440,7 @@ function renderDetail(place) {
     <div class="popup-warning"><strong>Not official.</strong> ${escapeHtml(disclaimerText(place.state || search.state))}</div>
     <p class="data-credit">${
       place.source === "curated"
-        ? "Hand-checked listing. Coordinates are approximate."
+        ? "Listed place. Coordinates are approximate."
         : place.source === "padus"
           ? 'Boundary: <a href="https://www.usgs.gov/programs/gap-analysis-project/science/protected-areas" target="_blank" rel="noopener">USGS PAD-US</a> (simplified).'
           : 'Location: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">&copy; OpenStreetMap contributors</a>.'

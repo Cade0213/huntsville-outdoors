@@ -138,13 +138,65 @@ function milesToPolygons(from, polygons) {
   return best;
 }
 
-// A point guaranteed to sit on/inside the largest polygon, for placing its marker.
+function distToSegment([px, py], [ax, ay], [bx, by]) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function minEdgeDistance(pt, rings) {
+  let min = Infinity;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) min = Math.min(min, distToSegment(pt, ring[j], ring[i]));
+  }
+  return min;
+}
+
+// A point well inside the largest polygon, for placing its marker. A plain bbox-center or
+// vertex-average centroid can land outside a concave or donut-shaped parcel (Bankhead NF's private
+// inholdings, a river-corridor refuge) -- this used to fall back to outer[0], a vertex on the
+// boundary, which puts the pin right on the edge of the land instead of inside it. Grid-search
+// instead for the interior point farthest from any edge: a coarse pass over the bounding box, then
+// a finer pass around the best candidate.
 function markerPointFor(polygons) {
   const largest = polygons.reduce((a, b) => (ringArea(b[0]) > ringArea(a[0]) ? b : a));
   const outer = largest[0];
   const lats = outer.map((p) => p[0]);
   const lngs = outer.map((p) => p[1]);
-  const bboxCenter = [(Math.min(...lats) + Math.max(...lats)) / 2, (Math.min(...lngs) + Math.max(...lngs)) / 2];
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+
+  let best = null;
+  let bestDist = -Infinity;
+  const search = (loLat, hiLat, loLng, hiLng, steps) => {
+    for (let i = 0; i <= steps; i++) {
+      const lat = loLat + ((hiLat - loLat) * i) / steps;
+      for (let j = 0; j <= steps; j++) {
+        const lng = loLng + ((hiLng - loLng) * j) / steps;
+        const pt = [lat, lng];
+        if (!pointInPolygons(pt, [largest])) continue;
+        const d = minEdgeDistance(pt, largest);
+        if (d > bestDist) {
+          bestDist = d;
+          best = pt;
+        }
+      }
+    }
+  };
+  search(minLat, maxLat, minLng, maxLng, 12);
+  if (best) {
+    const spanLat = (maxLat - minLat) / 6 || 0.01;
+    const spanLng = (maxLng - minLng) / 6 || 0.01;
+    search(best[0] - spanLat, best[0] + spanLat, best[1] - spanLng, best[1] + spanLng, 8);
+  }
+  if (best) return best;
+
+  // Degenerate shape (a sliver too thin for the grid to land inside) -- fall back to any point on it.
+  const bboxCenter = [(minLat + maxLat) / 2, (minLng + maxLng) / 2];
   if (pointInPolygons(bboxCenter, [largest])) return bboxCenter;
   const avg = [lats.reduce((s, v) => s + v, 0) / lats.length, lngs.reduce((s, v) => s + v, 0) / lngs.length];
   if (pointInPolygons(avg, [largest])) return avg;
@@ -229,7 +281,32 @@ const RE = {
 
 const LIKELY_HUNTING_DESIGNATIONS = new Set(["National Forest", "National Grassland", "National Public Lands"]);
 
-function classifyLand(name, designation) {
+// PAD-US's designation type (`DesTp_Desc`) is too coarse on its own to rule out hunting: a zoo,
+// a botanical garden, a city beach, or an urban greenway lands in the same broad "State Other or
+// Unknown" / "State Resource Management Area" / "Conservation Area" bucket PAD-US uses whenever
+// the source data doesn't have a more specific type, right alongside real wildlife management
+// areas that share the same bucket for the same reason. `MngNm_Desc` (Manager Name Description)
+// -- the specific agency that runs the parcel -- is the official attribute that actually tells
+// them apart, so outside the small set of designations that are unambiguous on their own (a
+// National Forest or National Grassland is federal multi-use land by definition), a parcel only
+// counts as huntable when it's run by an agency whose mandate is wildlife, game, or general-purpose
+// public land -- not a parks-and-rec department, a city/county/regional government, or the Park
+// Service, all of whom mostly run day-use civic sites (parks, zoos, gardens, beaches, museums).
+const HUNTING_CAPABLE_MANAGERS = new Set([
+  "State Fish and Wildlife",
+  "State Department of Conservation",
+  "State Department of Natural Resources",
+  "State Department of Land",
+  "State Land Board",
+  "Forest Service",
+  "Bureau of Land Management",
+  "U.S. Fish and Wildlife Service",
+  "Tennessee Valley Authority",
+  "Army Corps of Engineers",
+  "Bureau of Reclamation",
+]);
+
+function classifyLand(name, designation, managerName) {
   if (RE.exclude.test(name)) return null;
   const generic = RE.generic.test(name);
   const activities = [];
@@ -237,8 +314,14 @@ function classifyLand(name, designation) {
   let fishingTier = null;
 
   if (!RE.noHunting.test(name)) {
-    if (RE.likelyHunting.test(name) || LIKELY_HUNTING_DESIGNATIONS.has(designation)) huntingTier = "likely";
-    else huntingTier = "check";
+    const managerOk = HUNTING_CAPABLE_MANAGERS.has(managerName);
+    // The designation-only path trusts "National Forest/Grassland/Public Lands" as federal
+    // multi-use land, but PAD-US also files stray federal scraps with unresolved ownership under
+    // those same designations (e.g. "Other or Unknown Federal Land") -- gate it on manager too.
+    // The name-match path is left ungated: manager attribution is frequently "Unknown" even for
+    // well-established, unambiguously-named wildlife management areas.
+    if (RE.likelyHunting.test(name) || (managerOk && LIKELY_HUNTING_DESIGNATIONS.has(designation))) huntingTier = "likely";
+    else if (managerOk) huntingTier = "check";
   }
   if (RE.fishingAccess.test(name)) fishingTier = "likely";
   else if ((!generic && RE.water.test(name)) || designation === "Access Area") fishingTier = "check";
@@ -310,7 +393,7 @@ async function fetchPublicLands(center, radiusMi, signal) {
   for (const f of data.features || []) {
     const p = f.properties;
     const name = titleCase(p.Unit_Nm || "");
-    const cls = classifyLand(name, p.DesTp_Desc);
+    const cls = classifyLand(name, p.DesTp_Desc, p.MngNm_Desc);
     if (!cls) continue;
     const polygons = geometryToPolygons(f.geometry);
     if (!polygons.length) continue;
