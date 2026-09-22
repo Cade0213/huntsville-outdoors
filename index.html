@@ -65,6 +65,13 @@
       </svg>
       Hunting Draws
     </button>
+    <button type="button" role="tab" class="site-tab" data-view="almanac" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+          d="M20.4 14.3A8.6 8.6 0 019.7 3.6a8.5 8.5 0 1010.7 10.7z"/>
+      </svg>
+      Almanac
+    </button>
   </nav>
 
   <div class="app view" id="app" data-view="map">
@@ -242,6 +249,18 @@
     </div>
   </section>
 
+  <!-- ALMANAC -->
+  <section class="view almanac-view" id="almanac-view" data-view="almanac" aria-label="Almanac" hidden>
+    <div class="almanac-scroll">
+      <div class="almanac-inner">
+        <!-- Its own element, not the global #disclaimer bar: that one is per-state and clamped on
+             phones. This text is fixed and must stay fully visible. -->
+        <p class="alm-disclaimer" id="almanac-disclaimer" role="note"></p>
+        <div id="almanac-body"></div>
+      </div>
+    </div>
+  </section>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="states.js"></script>
   <script src="seasons.js"></script>
@@ -249,6 +268,7 @@
   <script src="live.js"></script>
   <script src="resources.js"></script>
   <script src="calendar.js"></script>
+  <script src="almanac.js"></script>
   <script src="script.js"></script>
   <script src="draws-data.js"></script>
   <script src="draws.js"></script>

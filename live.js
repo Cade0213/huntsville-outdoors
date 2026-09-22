@@ -4,6 +4,7 @@
 //   Public lands     USGS Protected Areas Database (PAD-US) – Public Access layer
 //   State lines      U.S. Census TIGERweb – used to show the right state agencies for each result
 //   Fishing & shops  OpenStreetMap via the Overpass API (community mirrors; best-effort)
+//   Weather          NOAA / National Weather Service api.weather.gov (official, U.S. only)
 //
 // PAD-US says a parcel is public and whether access is open or restricted. It does NOT say whether
 // hunting or fishing is allowed, so everything from here is labeled "unconfirmed" in the UI.
@@ -13,6 +14,7 @@ const ENDPOINTS = {
   nominatim: "https://nominatim.openstreetmap.org/search",
   padus: "https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/PADUS_Public_Access/FeatureServer/0/query",
   tigerStates: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0/query",
+  nws: "https://api.weather.gov/points/",
   overpass: [
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
@@ -584,4 +586,38 @@ function dedupeNearby(items, miles) {
     if (!dup) kept.push(item);
   }
   return kept;
+}
+
+// ---------------- Weather (NOAA / National Weather Service) ----------------
+// api.weather.gov is the official U.S. government forecast service: free, no key, CORS-open,
+// and it covers the U.S. and its territories only. Two round trips:
+//   1. /points/{lat},{lng}  -> the grid cell, its IANA time zone and the two forecast URLs
+//   2. the hourly + daily forecasts for that cell, fetched together
+// `timeZone` is the reason the points call is worth making on its own: it is what lets the
+// Almanac print sun and moon times in the searched city's clock time instead of the browser's.
+//
+// NOT AVAILABLE HERE: 30-year climate normals ("typical for this date"). NOAA publishes them
+// through NCEI, which requires an API token, so the Almanac links out instead of guessing.
+async function fetchWeather(center, signal) {
+  const [lat, lng] = center;
+  const point = await fetchJson(`${ENDPOINTS.nws}${lat.toFixed(4)},${lng.toFixed(4)}`, { signal, timeoutMs: 12000 });
+  const props = point.properties || {};
+  if (!props.forecast) throw new Error("No NWS forecast grid for this point");
+
+  const [hourly, daily] = await Promise.allSettled([
+    fetchJson(props.forecastHourly, { signal, timeoutMs: 12000 }),
+    fetchJson(props.forecast, { signal, timeoutMs: 12000 }),
+  ]);
+  const hourlyPeriods = hourly.status === "fulfilled" ? hourly.value.properties?.periods || [] : [];
+  const dailyPeriods = daily.status === "fulfilled" ? daily.value.properties?.periods || [] : [];
+
+  return {
+    timeZone: props.timeZone || null,
+    pointName: props.relativeLocation?.properties
+      ? `${props.relativeLocation.properties.city}, ${props.relativeLocation.properties.state}`
+      : null,
+    now: hourlyPeriods[0] || null,
+    periods: dailyPeriods.slice(0, 4),
+    forecastUrl: `https://forecast.weather.gov/MapClick.php?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}`,
+  };
 }

@@ -53,14 +53,18 @@ No modules. Every top-level `const` and `function` lands in the shared global sc
 `<script>` order in `index.html` is a real dependency graph:
 
 ```
-states.js → seasons.js → data.js → live.js → resources.js → calendar.js → script.js
+states.js → seasons.js → data.js → live.js → resources.js → calendar.js → almanac.js → script.js
           → draws-data.js → draws.js
 ```
 
 - `data.js` references `SEASON_SCOPES` from `seasons.js`, so it must come after it.
+- `almanac.js` sits **before** `script.js`, like `calendar.js` and `resources.js`: it defines
+  `renderAlmanac()` / `initAlmanac()` for `refreshAll()` and the start block to call, and runs
+  nothing at load. Keep it that way — a top-level call there would hit `escapeHtml`/`appState`
+  before `script.js` has defined them.
 - **`draws.js` must stay after `script.js`** — it uses `escapeHtml`, `restoreSplit` and `map`,
   all defined there. Moving it earlier throws a ReferenceError at load.
-- `script.js` ends with top-level `initCalendar(); runSearch(...)`. `draws.js` ends with
+- `script.js` ends with top-level `initCalendar(); initAlmanac(); runSearch(...)`. `draws.js` ends with
   `initDraws()`. There is no single entry point.
 
 ### File roles
@@ -68,21 +72,23 @@ states.js → seasons.js → data.js → live.js → resources.js → calendar.j
 | File | Role |
 |---|---|
 | `script.js` | App shell: `appState`, Leaflet map, search, results list, detail card, panel tabs, resizable split |
-| `live.js` | All network I/O (PAD-US, TIGERweb, Photon/Nominatim, Overpass) + geometry math |
+| `live.js` | All network I/O (PAD-US, TIGERweb, Photon/Nominatim, Overpass, NWS weather) + geometry math |
 | `data.js` | Hand-written curated Huntsville places (`LOCATIONS`) |
 | `seasons.js` | Alabama season dates, `GAME`, and the shared date helpers (`parseDay`, `TODAY`, `daysBetween`, `formatDay`) |
 | `calendar.js` | Season calendar tab; reads `appState` |
 | `resources.js` | Licenses & gear tab; reads `appState` |
 | `states.js` | Per-state agency links |
 | `draws-data.js` / `draws.js` | Hunting Draws dataset / its UI, plus top-level view switching |
+| `almanac.js` | Almanac tab: sun/moon/solunar math, general seasonal guidance, NWS weather, official links |
 
-`appState` in `script.js` is the shared mutable store; `calendar.js` and `resources.js` read it
-directly. `refreshAll()` re-renders everything that depends on it.
+`appState` in `script.js` is the shared mutable store; `calendar.js`, `resources.js` and
+`almanac.js` read it directly. `refreshAll()` re-renders everything that depends on it.
 
 ### Two tab systems — do not mix them
 
 - **Top-level views**: `.site-tab` + `.view` with `data-view`, switched by `setView()` in
-  `draws.js`. Map Locator vs Hunting Draws.
+  `draws.js`. Map Locator vs Hunting Draws vs Almanac. `setView()` is generic over
+  `.view[data-view]`, so adding a section needs no change there.
 - **Panel tabs inside Map Locator**: `.tab` + `.tab-panel` with `data-tab`, switched by
   `setTab()` in `script.js`.
 

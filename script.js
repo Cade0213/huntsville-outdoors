@@ -1,6 +1,7 @@
 // App shell: city search, map, results list, detail panel and tabs.
 // Data: data.js (hand-checked places), seasons.js (AL season dates), live.js (nationwide lookups),
-// states.js (state agencies), resources.js (licenses & gear), calendar.js (season calendar).
+// states.js (state agencies), resources.js (licenses & gear), calendar.js (season calendar),
+// almanac.js (almanac tab).
 
 // Required disclaimer. In Alabama it names ADCNR verbatim; elsewhere it names that state's wildlife agency.
 const AL_AGENCY_NAME = "Alabama Department of Conservation and Natural Resources (Outdoor Alabama)";
@@ -524,6 +525,7 @@ function refreshAll() {
   renderList();
   renderCalendar();
   renderResources();
+  renderAlmanac();
   if (appState.selectedId && !appState.places.some((p) => p.id === appState.selectedId)) appState.selectedId = null;
   showPanel();
   renderDisclaimerAgency();
@@ -578,6 +580,7 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
       if (stale()) return;
       appState.loading.states = false;
       renderResources();
+      renderAlmanac(); // its Official Resources section lists an agency per state in the area
       renderList();
       if (appState.tab === "seasons") renderCalendar();
     });
@@ -924,4 +927,5 @@ restoreSplit();
 
 // ---------- Start ----------
 initCalendar();
+initAlmanac();
 runSearch(readUrl(), { updateUrl: false });

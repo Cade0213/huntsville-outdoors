@@ -1013,3 +1013,175 @@ body.on-draws .search { display: none; }
   .detail-seasons li { grid-template-columns: 14px minmax(0, 1fr); }
   .detail-seasons .g-status { grid-column: 2; }
 }
+
+/* ---------- Almanac ---------- */
+/* Same shell as .draws-view: the body is overflow:hidden, so the scroll lives on an inner box. */
+.almanac-view { flex: 1; min-height: 0; display: flex; }
+.almanac-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.almanac-inner { max-width: 1060px; margin: 0 auto; padding: 16px 20px 40px; }
+
+/* Deliberately not .disclaimer — that one is the global per-state bar and is line-clamped on
+   phones. This text is required in full on every screen size. */
+.alm-disclaimer {
+  margin: 0 0 16px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.alm-section {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.alm-section .panel-heading { margin-top: 0; }
+.alm-line { margin: 10px 0 0; font-size: 0.9rem; line-height: 1.5; }
+.alm-foot { margin: 10px 0 0; font-size: 0.76rem; color: var(--muted); line-height: 1.5; }
+.alm-foot strong { color: var(--text); }
+
+/* Stat strip — shared by the overview and the weather snapshot. */
+.alm-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.alm-stat { background: var(--sand); border-radius: 8px; padding: 7px 9px; min-width: 0; }
+.alm-stat-k {
+  display: block;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.alm-stat-v { display: block; margin-top: 2px; font-size: 0.9rem; font-weight: 700; line-height: 1.3; }
+
+/* Moon & solunar */
+.alm-moon {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--forest);
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-top: 10px;
+}
+.alm-moon-glyph { font-size: 2.2rem; line-height: 1; flex: none; }
+.alm-moon > div { flex: 1; min-width: 0; }
+.alm-moon h3 { margin: 0; font-size: 1.05rem; }
+.alm-moon p { margin: 2px 0 0; font-size: 0.8rem; opacity: 0.88; line-height: 1.4; }
+.alm-moon-next { font-size: 0.75rem !important; opacity: 0.72 !important; }
+.alm-rating {
+  flex: none;
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.alm-periods { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.alm-period {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  background: var(--sand);
+  border-left: 4px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.alm-period.major { border-left-color: var(--hunting); }
+.alm-period.minor { border-left-color: var(--fishing); }
+.alm-period-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.alm-period-time { font-weight: 700; font-size: 0.88rem; }
+.alm-period-label { font-size: 0.78rem; color: var(--muted); text-align: right; }
+
+/* Seasonal guidance */
+.alm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 10px; }
+.alm-card { background: var(--sand); border-radius: 8px; border-top: 3px solid var(--line); padding: 10px 12px; }
+.alm-card.hunting { border-top-color: var(--hunting); }
+.alm-card.fishing { border-top-color: var(--fishing); }
+.alm-card h3 { margin: 0 0 5px; font-size: 0.95rem; color: var(--forest-dark); }
+.alm-card p { margin: 0; font-size: 0.85rem; line-height: 1.5; }
+.alm-card-note { margin-top: 7px !important; padding-top: 7px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 0.8rem !important; }
+
+/* Weather */
+.alm-forecast { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.alm-forecast li {
+  background: var(--sand);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.83rem;
+  line-height: 1.5;
+}
+.alm-forecast strong { color: var(--forest-dark); }
+.alm-temp { font-weight: 700; color: var(--hunting); margin-left: 4px; }
+.alm-forecast li span:last-child { display: block; margin-top: 2px; color: var(--text); }
+
+/* Official resources */
+.alm-agencies { display: grid; gap: 8px; margin-top: 10px; }
+.alm-agency {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  text-decoration: none;
+  color: inherit;
+}
+.alm-agency:hover { border-color: var(--forest); background: var(--sand); }
+.alm-agency-abbr {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: var(--forest);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.alm-agency-body { flex: 1; min-width: 0; }
+.alm-agency-body strong { display: block; font-size: 0.92rem; color: var(--forest-dark); line-height: 1.3; }
+.alm-agency-body span { display: block; margin-top: 2px; font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
+.alm-agency-go { flex: none; font-weight: 700; color: var(--forest); }
+
+.alm-links { display: grid; gap: 6px; margin-top: 6px; }
+/* Each stacked link wraps a title and a description, so the underline goes on the title only. */
+.alm-links a { font-size: 0.85rem; font-weight: 700; line-height: 1.4; text-decoration: none; }
+.alm-links a strong { text-decoration: underline; }
+.alm-links a span { display: block; font-weight: 400; font-size: 0.78rem; color: var(--muted); }
+.alm-links.inline a { text-decoration: underline; }
+.alm-links.inline { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; }
+
+@media (max-width: 860px) {
+  .almanac-inner { padding: 12px 12px 32px; }
+  .alm-section { padding: 12px; }
+  .alm-stats { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); }
+  /* Stack the period row so the time never collides with its label on a narrow screen. */
+  .alm-period { grid-template-columns: 52px minmax(0, 1fr); row-gap: 2px; }
+  .alm-period-label { grid-column: 2; text-align: left; }
+  .alm-moon { flex-wrap: wrap; }
+  .alm-rating { order: -1; margin-left: auto; }
+}
