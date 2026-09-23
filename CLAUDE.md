@@ -169,6 +169,11 @@ the *shape* of the data, not a trustworthy source of its *content*:
   with energy computed from a simplified drag model. Like the Almanac's guidance it carries its own
   fixed disclaimer and makes no legal claims; legal method-of-take rules are linked to the state
   agency, not carried.
+- `images/species/*.jpg` — the Big Game tab's animal photos. Each is a cropped, resized copy of a
+  U.S. Fish & Wildlife Service photo whose FWS.gov media page reads "Media Usage Rights/License:
+  Public Domain"; `BG_PHOTOS` in `calibers.js` records each page, credit and the retrieval date, and
+  the tab prints the credits. Many FWS.gov photos are instead "Copyrighted … Used by Permission" —
+  check the rights field on the page before adding or swapping one.
 
 A key distinction the data model must preserve: PAD-US is authoritative for who manages a parcel
 and whether the public may enter, but it explicitly **does not** say whether hunting or fishing is

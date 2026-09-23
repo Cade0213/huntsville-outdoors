@@ -15,6 +15,9 @@
 //                 spitzer rifle loads. Accuracy is unmeasured, and it is least reliable for slow,
 //                 low-BC projectiles (12 ga slug, .45-70, .350 Legend) — the slug past ~150 yd
 //                 especially. Good for comparing, not for dope.
+//   Photos        U.S. Fish & Wildlife Service, each marked "Public Domain" on its FWS.gov media
+//                 page (BG_PHOTOS below records the page, credit and retrieval date). Cropped and
+//                 resized into images/species/; the originals are unaltered on FWS.gov.
 //   Legal rules   not carried at all. Legal firearms, calibers and methods of take belong to the
 //                 state agency; the official section links there from states.js.
 
@@ -44,6 +47,24 @@ const BG_SPECIES = [
   { id: "brownbear", tag: "GB", name: "Brown / grizzly bear", size: 5, sizeLabel: "Huge · dangerous", minE: 2500,
     note: "Dangerous game. Heavy, deep-penetrating bullets at close range are the norm." },
 ];
+
+// One public-domain USFWS photo per species. `page` is the FWS.gov media page that states the
+// rights; every one read "Media Usage Rights/License: Public Domain" when retrieved.
+const BG_PHOTO_RETRIEVED = "2026-09-22";
+const BG_PHOTOS = {
+  pronghorn: { credit: "Tom Koerner/USFWS", page: "https://www.fws.gov/media/pronghorn-0" },
+  whitetail: { credit: "Irene Hinke-Sacilotto/USFWS", page: "https://www.fws.gov/media/white-tailed-buck-marsh-0" },
+  muledeer: { credit: "Gannon Castle/USFWS", page: "https://www.fws.gov/media/mule-deer-buck-0" },
+  hog: { credit: "Waccamaw NWR/USFWS", page: "https://www.fws.gov/media/feral-hogs-invasive-species" },
+  blackbear: { credit: "Beverly Meekins, Pocosin Lakes NWR (USFWS)", page: "https://www.fws.gov/media/black-bear-stands-pocosin-lakes-refuge" },
+  elk: { credit: "Lane Wintermute/USFWS", page: "https://www.fws.gov/media/bull-elk-0" },
+  moose: { credit: "Tom Koerner/USFWS", page: "https://www.fws.gov/media/bull-moose" },
+  brownbear: { credit: "U.S. Fish and Wildlife Service", page: "https://www.fws.gov/media/grizzly-bear-greater-yellowstone-ecosystem" },
+};
+
+function bgPhoto(id, cls) {
+  return `<img class="${cls}" src="images/species/${id}.jpg" width="480" height="360" alt="" loading="lazy" decoding="async" />`;
+}
 
 // Typical factory loads (approximate). recoil: 1 (mild) – 5 (heavy), a felt-recoil class.
 const BG_CARTRIDGES = [
@@ -164,7 +185,7 @@ function bgShell() {
       <div class="bg-species" id="bg-species" role="radiogroup" aria-labelledby="bg-pick-h">
         ${BG_SPECIES.map((s) => `
           <button type="button" class="bg-animal" role="radio" data-species="${s.id}" aria-checked="false" tabindex="-1">
-            <span class="bg-tag" aria-hidden="true">${s.tag}</span>
+            <span class="bg-animal-art">${bgPhoto(s.id, "bg-photo")}</span>
             <span class="bg-animal-name">${escapeHtml(s.name)}</span>
             <span class="bg-animal-size">${bgSizeDots(s.size)}<span>${escapeHtml(s.sizeLabel)}</span></span>
           </button>`).join("")}
@@ -174,7 +195,10 @@ function bgShell() {
     <section class="bg-focus" aria-label="Selected animal and shot distance">
       <div class="bg-focus-main">
         <div class="bg-focus-head">
-          <span class="bg-tag big" id="bg-focus-tag" aria-hidden="true"></span>
+          <figure class="bg-focus-art">
+            <img id="bg-focus-img" class="bg-photo" width="480" height="360" alt="" decoding="async" />
+            <figcaption id="bg-focus-credit"></figcaption>
+          </figure>
           <div>
             <h2 id="bg-focus-name"></h2>
             <p id="bg-focus-note"></p>
@@ -249,6 +273,11 @@ function bgShell() {
       Energy is only one part of a clean, ethical shot. Bullet construction, shot placement, practice and knowing
       your own limits matter at least as much. Figures here are estimates from typical factory loads and a
       simplified drag model; your rifle and ammunition will differ.
+    </p>
+    <p class="fine-print bg-credits">
+      <strong>Photos:</strong> U.S. Fish &amp; Wildlife Service, public domain (retrieved ${BG_PHOTO_RETRIEVED}) —
+      ${BG_SPECIES.map((sp) => `<a href="${BG_PHOTOS[sp.id].page}" target="_blank" rel="noopener">${escapeHtml(sp.name)}</a>
+        (${escapeHtml(BG_PHOTOS[sp.id].credit)})`).join(", ")}.
     </p>`;
 }
 
@@ -260,7 +289,10 @@ function bgUpdateSpecies() {
     b.setAttribute("aria-checked", String(on));
     b.tabIndex = on ? 0 : -1;
   });
-  $bg("bg-focus-tag").textContent = sp.tag;
+  const img = $bg("bg-focus-img");
+  img.src = `images/species/${sp.id}.jpg`;
+  img.alt = sp.name;
+  $bg("bg-focus-credit").textContent = `Photo: ${BG_PHOTOS[sp.id].credit}`;
   $bg("bg-focus-name").textContent = sp.name;
   $bg("bg-focus-note").textContent = sp.note;
   $bg("bg-focus-min").textContent = `${bgNum(sp.minE)} ft·lb`;

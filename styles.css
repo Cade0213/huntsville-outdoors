@@ -164,6 +164,8 @@ select {
   max-width: 100%;
 }
 .radius select { border: 0; }
+/* The button and radius picker keep their size; only the text box gives way on narrow screens. */
+.search .btn-primary, .search .radius { flex: none; }
 
 .btn-primary, .btn-secondary {
   display: inline-flex;
@@ -1450,22 +1452,16 @@ body.on-draws .search { display: none; }
 }
 .bg-animal:hover { border-color: var(--moss); }
 .bg-animal[aria-checked="true"] { border-color: var(--forest); background: #eaf3e4; box-shadow: inset 0 0 0 1px var(--forest); }
-.bg-animal[aria-checked="true"] .bg-tag { background: var(--hunting); }
+.bg-animal-art { display: block; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 8px; background: var(--line-soft); }
+.bg-photo { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bg-animal[aria-checked="true"] .bg-animal-art { box-shadow: 0 0 0 2px var(--hunting); }
+.bg-animal:not([aria-checked="true"]) .bg-photo { filter: saturate(0.85); }
+.bg-focus-art { flex: none; width: 128px; margin: 0; }
+.bg-focus-art img { aspect-ratio: 4 / 3; height: auto; border-radius: 12px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3); }
+.bg-focus-art figcaption { margin-top: 4px; font-size: 0.62rem; line-height: 1.3; opacity: 0.7; }
+.bg-credits a { color: var(--muted); }
 .bg-animal-name { font-weight: 700; font-size: 0.9rem; color: var(--forest-dark); line-height: 1.2; }
 .bg-animal-size { display: flex; align-items: center; gap: 6px; font-size: 0.7rem; color: var(--muted); }
-.bg-tag {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: var(--forest);
-  color: #fff;
-  font-weight: 800;
-  font-size: 0.8rem;
-  letter-spacing: 0.03em;
-}
-.bg-tag.big { width: 54px; height: 54px; border-radius: 14px; font-size: 1.15rem; background: var(--hunting); flex: none; }
 .bg-dots { display: inline-flex; gap: 2px; }
 .bg-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
 .bg-dots i.on { background: var(--forest); }
@@ -1710,6 +1706,7 @@ body.on-draws .search { display: none; }
   .bg-inner { padding: 12px 12px 32px; }
   .bg-section { padding: 12px; }
   .bg-focus { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .bg-focus-art { width: 96px; }
   /* A swipeable strip on phones, so the picker doesn't push the slider far below the fold. */
   .bg-species { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 4px; margin: 0 -4px; padding-inline: 4px; }
   .bg-animal { flex: 0 0 128px; scroll-snap-align: start; }
@@ -1726,6 +1723,18 @@ body.on-draws .search { display: none; }
   .bg-bar { grid-area: bar; }
   .bg-row-e { grid-area: e; display: flex; gap: 3px; align-items: baseline; justify-content: flex-end; }
   .bg-table td .bg-rate { grid-area: auto; }
+}
+
+/* ---------- Safe areas ----------
+   index.html sets viewport-fit=cover, so on notched / rounded-corner phones the page is drawn edge
+   to edge. Without these insets the ends of the header (the Search button) sit under the corners. */
+.disclaimer, .topbar, .site-tabs {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+@media (max-width: 860px) {
+  .disclaimer, .topbar { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .site-tabs { padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
 }
 
 /* ---------- Site-wide polish ---------- */
@@ -1805,7 +1814,8 @@ body.on-draws .search { display: none; }
   }
   .btn-primary:active, .btn-secondary:active, .bg-chip:active, .bg-add:active, .bg-animal:active { transform: scale(0.97); }
   .bg-add { transition: background-color 0.18s, border-color 0.18s, transform 0.12s; }
-  .bg-animal[aria-checked="true"] .bg-tag { animation: plw-pop 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  .bg-photo { transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), filter 0.2s; }
+  .bg-animal:hover .bg-photo { transform: scale(1.06); }
 
   /* Views re-run their entrance each time they are shown (display:none → block restarts it). */
   .draws-inner, .almanac-inner, .bg-inner { animation: plw-rise 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
