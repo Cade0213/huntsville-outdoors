@@ -526,6 +526,7 @@ function refreshAll() {
   renderCalendar();
   renderResources();
   renderAlmanac();
+  renderCalibers();
   if (appState.selectedId && !appState.places.some((p) => p.id === appState.selectedId)) appState.selectedId = null;
   showPanel();
   renderDisclaimerAgency();
@@ -928,4 +929,5 @@ restoreSplit();
 // ---------- Start ----------
 initCalendar();
 initAlmanac();
+initCalibers();
 runSearch(readUrl(), { updateUrl: false });

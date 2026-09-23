@@ -1,7 +1,11 @@
 // Almanac tab: a general-guidance companion to the map, keyed to whatever city is searched.
 //
-// Reads `appState.search` / `appState.areaStates` (script.js) and re-renders from refreshAll(),
-// exactly like calendar.js and resources.js. Nothing runs at load — script.js calls initAlmanac().
+// Reads `appState.search` / `appState.areaStates` (script.js). Nothing runs at load — script.js
+// calls initAlmanac(), which builds the tab's shell and controls ONCE. renderAlmanac() then only
+// fills the location- and weather-dependent parts, and it has three callers that can fire while
+// someone is mid-interaction: refreshAll() (every Map-tab filter change), script.js once the
+// search area's states resolve, and ensureWeather() when the NWS response lands. Because the day
+// slider, outlook grid and month chips live in the shell, none of those re-renders touch them.
 //
 // Where the numbers come from:
 //   Sun & moon    calculated in this file (mean astronomical formulas, approximate by design)
@@ -272,85 +276,125 @@ function ensureWeather(center) {
 }
 
 // ---------- Section rendering ----------
+// UI state that survives every renderAlmanac(). `offset` is days after TODAY (so ?date= still
+// works); `month` is null while the guidance follows the selected day, else a month the user picked.
+const ALMANAC_DAYS = 30;
+const almanacUi = { offset: 0, month: null };
+
+const $a = (id) => document.getElementById(id);
+
 function almanacStates() {
   const { search, areaStates } = appState;
   const list = (areaStates.length ? areaStates : [search.state]).filter((a) => STATES[a]);
   return list;
 }
 
-function overviewSection(zone, sun, moon) {
-  const { search } = appState;
-  const abbrs = almanacStates();
-  const stateNames = abbrs.map((a) => STATES[a].name);
-  const places = visiblePlaces().length;
-  const scopes = scopesForSearch(search);
-
-  // Only claim something about seasons where this app actually holds transcribed season data.
-  let seasonLine;
-  if (scopes.length) {
-    const scope = SEASON_SCOPES[scopes[0]];
-    const openNow = Object.keys(GAME).filter((g) => gameStatus(scopes[0], g, TODAY).kind === "open");
-    seasonLine = openNow.length
-      ? `<strong>${openNow.map((g) => GAME[g].label).join(", ")}</strong> show as open today in ${escapeHtml(scope.name)}.`
-      : `No general seasons show as open today in ${escapeHtml(scope.name)}.`;
-    seasonLine += ` <button type="button" class="link-btn" data-almanac-seasons>Open the season calendar</button>`;
-  } else {
-    seasonLine = stateNames.length
-      ? `Season dates for ${escapeHtml(stateNames.join(" and "))} are not carried in this app — use the official links below.`
-      : `Search a city to see season guidance for its state.`;
-  }
-
-  const dayLength = sun.sunrise != null && sun.sunset != null
-    ? `${Math.floor((sun.sunset - sun.sunrise) / 3600000)}h ${Math.round(((sun.sunset - sun.sunrise) % 3600000) / 60000)}m`
-    : sun.polar === "up" ? "24h (sun does not set)" : "0h (sun does not rise)";
-
-  return `
-    <section class="alm-section">
-      <div class="panel-heading">
-        <h2>Current Overview <span class="pill">${escapeHtml(search.label)}</span></h2>
-        <p class="sub">${formatDay(TODAY, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-          · ${stateNames.length ? escapeHtml(stateNames.join(", ")) : "United States"}
-          · ${search.radius}-mile search area</p>
-      </div>
-      <div class="alm-stats">
-        <div class="alm-stat"><span class="alm-stat-k">Sunrise</span><span class="alm-stat-v">${formatClock(sun.sunrise, zone)}</span></div>
-        <div class="alm-stat"><span class="alm-stat-k">Sunset</span><span class="alm-stat-v">${formatClock(sun.sunset, zone)}</span></div>
-        <div class="alm-stat"><span class="alm-stat-k">Daylight</span><span class="alm-stat-v">${dayLength}</span></div>
-        <div class="alm-stat"><span class="alm-stat-k">Moon</span><span class="alm-stat-v">${moon.glyph} ${Math.round(moon.illumination * 100)}%</span></div>
-        <div class="alm-stat"><span class="alm-stat-k">Public places mapped</span><span class="alm-stat-v">${places}</span></div>
-      </div>
-      <p class="alm-line">${seasonLine}</p>
-      <p class="alm-foot">Times are for ${escapeHtml(search.label)}${zone.exact ? "" : " in approximate local solar time — a time zone could not be confirmed, so they may be off by an hour"}.</p>
-    </section>`;
+function almanacDay(offset = almanacUi.offset) {
+  return new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + offset);
 }
 
-function moonSection(zone, moon, periods) {
-  const rating = solunarRating(moon);
-  const row = (p) => `
-    <li class="alm-period ${p.kind}">
-      <span class="alm-period-tag">${p.kind === "major" ? "Major" : "Minor"}</span>
-      <span class="alm-period-time">${formatSpan(p.start, p.end, zone)}</span>
-      <span class="alm-period-label">${escapeHtml(p.label)}</span>
-    </li>`;
+// zoneFor() measures the UTC offset at this moment. A day on the far side of a daylight-saving
+// change needs its own offset, or solunar windows land an hour off when bucketed into the day.
+function zoneForDay(zone, day) {
+  if (!zone.tz) return zone;
+  try {
+    return { ...zone, offsetMin: tzOffsetMinutes(Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), 12), zone.tz) };
+  } catch {
+    return zone;
+  }
+}
+
+// True only on the one calendar day nearest the exact full / new moon, so the outlook, the jump
+// buttons and the "full moon in ~N days" figure all agree (the 8-way phase name spans ~3 days).
+const nearFull = (m) => Math.min(m.daysToFull, SYNODIC_MONTH - m.daysToFull) < 0.5;
+const nearNew = (m) => Math.min(m.daysToNew, SYNODIC_MONTH - m.daysToNew) < 0.5;
+
+function dayLabel(offset, opts = { weekday: "short", month: "short", day: "numeric" }) {
+  if (offset === 0) return "Today";
+  if (offset === 1) return "Tomorrow";
+  return formatDay(almanacDay(offset), opts);
+}
+
+// Moon drawn from its cycle position: a dark disc, then the lit part bounded by the limb on one
+// side and the terminator (an ellipse of half-width r·|cos 2πc|) on the other.
+function moonSvg(cycle, size) {
+  const r = size / 2 - 1, c = size / 2;
+  const k = Math.cos(2 * Math.PI * cycle); // 1 at new, −1 at full
+  const waxing = cycle < 0.5;
+  const rx = Math.abs(k) * r;
+  const outer = waxing ? 1 : 0;
+  const inner = waxing ? (k > 0 ? 0 : 1) : (k > 0 ? 1 : 0);
+  const lit = cycle < 0.01 || cycle > 0.99 ? "" :
+    `<path d="M${c},${c - r} A${r},${r} 0 0 ${outer} ${c},${c + r} A${rx.toFixed(2)},${r} 0 0 ${inner} ${c},${c - r}Z" class="lit"/>`;
+  return `<svg class="alm-moon-svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">
+    <circle cx="${c}" cy="${c}" r="${r}" class="dark"/>${lit}</svg>`;
+}
+
+// ---------- Shell (built once) ----------
+function almanacShell() {
+  const ticks = [0, 7, 14, 21, 29];
+  const outlook = Array.from({ length: ALMANAC_DAYS }, (_, i) => {
+    const day = almanacDay(i);
+    const moon = moonInfo(day);
+    const rating = solunarRating(moon);
+    const phaseTag = nearFull(moon) ? "Full" : nearNew(moon) ? "New" : "";
+    return `
+      <button type="button" class="alm-od ${rating.label.toLowerCase()}" data-offset="${i}" aria-pressed="false"
+        aria-label="${escapeHtml(formatDay(day, { weekday: "long", month: "long", day: "numeric" }))}: ${escapeHtml(moon.name)}, ${escapeHtml(rating.label)} solunar day">
+        <span class="alm-od-dow">${i === 0 ? "Today" : formatDay(day, { weekday: "short" })}</span>
+        ${moonSvg(moon.cycle, 26)}
+        <span class="alm-od-num">${day.getDate()}</span>
+        <span class="alm-od-tag">${phaseTag || rating.label}</span>
+      </button>`;
+  }).join("");
 
   return `
-    <section class="alm-section">
-      <div class="panel-heading">
-        <h2>Moon &amp; Solunar</h2>
-        <p class="sub">Calculated for this location. Approximate — not an ephemeris.</p>
-      </div>
-      <div class="alm-moon">
-        <span class="alm-moon-glyph" aria-hidden="true">${moon.glyph}</span>
-        <div>
-          <h3>${escapeHtml(moon.name)}</h3>
-          <p>${Math.round(moon.illumination * 100)}% illuminated · day ${Math.floor(moon.age)} of the lunar cycle</p>
-          <p class="alm-moon-next">Full moon in ~${Math.round(moon.daysToFull)} day${Math.round(moon.daysToFull) === 1 ? "" : "s"}
-            · new moon in ~${Math.round(moon.daysToNew)} day${Math.round(moon.daysToNew) === 1 ? "" : "s"}</p>
+    <section class="bg-focus alm-hero" aria-label="Selected day">
+      <div>
+        <span class="bg-k" id="alm-where"></span>
+        <div class="alm-hero-head">
+          <span class="alm-hero-moon" id="alm-hero-moon"></span>
+          <div>
+            <h2 id="alm-hero-date"></h2>
+            <p id="alm-hero-moon-line"></p>
+          </div>
         </div>
-        <span class="alm-rating" title="${escapeHtml(rating.detail)}">${escapeHtml(rating.label)}</span>
+        <div class="bg-focus-stats alm-hero-stats" id="alm-hero-stats"></div>
       </div>
-      <ul class="alm-periods">${periods.map(row).join("")}</ul>
-      <p class="alm-line"><strong>${escapeHtml(rating.label)} day.</strong> ${escapeHtml(rating.detail)}</p>
+      <div class="bg-range">
+        <label for="alm-day" class="bg-range-label">
+          <span>Plan a day</span>
+          <output id="alm-day-out" for="alm-day"></output>
+        </label>
+        <input type="range" id="alm-day" min="0" max="${ALMANAC_DAYS - 1}" step="1" value="0" />
+        <div class="bg-ticks" aria-hidden="true">${ticks.map((t) => `<span>${t === 0 ? "Today" : `+${t}d`}</span>`).join("")}</div>
+        <div class="bg-presets" role="group" aria-label="Jump to a day">
+          <button type="button" class="bg-chip" data-jump="today">Today</button>
+          <button type="button" class="bg-chip" data-jump="peak">Next peak day</button>
+          <button type="button" class="bg-chip" data-jump="full">Full moon</button>
+          <button type="button" class="bg-chip" data-jump="new">New moon</button>
+        </div>
+        <p class="bg-live" id="alm-live" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section class="bg-section" aria-labelledby="alm-glance-h">
+      <div class="panel-heading">
+        <h2 id="alm-glance-h">Day at a glance</h2>
+        <p class="sub" id="alm-glance-sub"></p>
+      </div>
+      <div class="alm-dial-wrap">
+        <div class="alm-dial" id="alm-dial"></div>
+        <div class="alm-dial-read" id="alm-dial-read" aria-hidden="true"></div>
+      </div>
+      <div class="alm-dial-axis" aria-hidden="true"><span>12 AM</span><span>6 AM</span><span>Noon</span><span>6 PM</span><span>12 AM</span></div>
+      <ul class="alm-dial-key" aria-label="Key">
+        <li><span class="k-major"></span>Major period</li>
+        <li><span class="k-minor"></span>Minor period</li>
+        <li><span class="k-now"></span>Now</li>
+      </ul>
+      <ul class="alm-periods" id="alm-periods"></ul>
+      <p class="alm-line" id="alm-rating-line"></p>
       <p class="alm-foot">
         Major periods are the two hours around the moon passing overhead and underfoot; minor periods the hour
         around moonrise and moonset. The moon times are estimated from its phase alone, so the minor periods in
@@ -358,42 +402,226 @@ function moonSection(zone, moon, periods) {
         hunters and anglers, not a scientific prediction of game movement — and no wildlife agency publishes it.
         Weather, pressure and hunting pressure routinely matter more.
       </p>
+    </section>
+
+    <section class="bg-section" aria-labelledby="alm-outlook-h">
+      <div class="panel-heading">
+        <h2 id="alm-outlook-h">30-day moon outlook</h2>
+        <p class="sub">Tap a day to plan it. Ratings follow the solunar convention that new and full moons are
+          strongest — a tradition, not a forecast of game movement.</p>
+      </div>
+      <div class="alm-outlook" id="alm-outlook" role="group" aria-label="Choose a day">${outlook}</div>
+    </section>
+
+    <div class="bg-grid alm-grid">
+      <div id="alm-overview"></div>
+      <div id="alm-weather"></div>
+    </div>
+
+    <section class="bg-section" aria-labelledby="alm-guide-h">
+      <div class="panel-heading">
+        <h2 id="alm-guide-h">Seasonal guidance</h2>
+        <p class="sub" id="alm-guide-sub"></p>
+      </div>
+      <div class="alm-months" id="alm-months" role="group" aria-label="Choose a month">
+        ${Array.from({ length: 12 }, (_, m) => `<button type="button" class="alm-mo" data-month="${m}" aria-pressed="false">${
+          formatDay(new Date(2000, m, 1), { month: "short" })}</button>`).join("")}
+      </div>
+      <div class="alm-cards" id="alm-guide-cards"></div>
+      <p class="alm-foot" id="alm-guide-foot"></p>
+    </section>
+
+    <div id="alm-official"></div>`;
+}
+
+// ---------- Day-dependent parts ----------
+function renderAlmanacDay() {
+  if (!$a("alm-day")) return;
+  const { search } = appState;
+  const offset = almanacUi.offset;
+  const day = almanacDay(offset);
+  const zone = zoneForDay(zoneFor(search.center, almanacState.weather), day);
+  const sun = sunTimes(day, search.center[0], search.center[1]);
+  const moon = moonInfo(day);
+  const rating = solunarRating(moon);
+  const periods = solunarPeriods(day, search.center[0], search.center[1], zone);
+  const longDate = formatDay(day, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  const dayLength = sun.sunrise != null && sun.sunset != null
+    ? `${Math.floor((sun.sunset - sun.sunrise) / 3600000)}h ${Math.round(((sun.sunset - sun.sunrise) % 3600000) / 60000)}m`
+    : sun.polar === "up" ? "24h (sun does not set)" : "0h (sun does not rise)";
+
+  // Hero.
+  $a("alm-where").textContent = `Almanac · ${search.label}`;
+  $a("alm-hero-date").textContent = offset === 0 ? `Today, ${formatDay(day, { month: "long", day: "numeric" })}` : longDate;
+  $a("alm-hero-moon").innerHTML = moonSvg(moon.cycle, 64);
+  $a("alm-hero-moon-line").innerHTML =
+    `${escapeHtml(moon.name)} · ${Math.round(moon.illumination * 100)}% lit · <span class="alm-rating">${escapeHtml(rating.label)} solunar day</span>`;
+  $a("alm-hero-stats").innerHTML = [
+    ["Sunrise", formatClock(sun.sunrise, zone)],
+    ["Sunset", formatClock(sun.sunset, zone)],
+    ["Daylight", dayLength],
+  ].map(([k, v]) => `<div><span class="bg-k">${k}</span><span class="bg-v">${escapeHtml(v)}</span></div>`).join("");
+
+  const slider = $a("alm-day");
+  slider.value = String(offset);
+  slider.style.setProperty("--pct", `${(offset / (ALMANAC_DAYS - 1)) * 100}%`);
+  slider.setAttribute("aria-valuetext", longDate);
+  $a("alm-day-out").textContent = dayLabel(offset);
+  $a("alm-live").textContent = `${longDate}: ${moon.name}, ${rating.label.toLowerCase()} solunar day, sunrise ${formatClock(sun.sunrise, zone)}.`;
+  document.querySelectorAll("[data-jump]").forEach((b) => b.classList.toggle("is-on", b.dataset.jump === "today" && offset === 0));
+
+  // Outlook selection.
+  document.querySelectorAll("#alm-outlook .alm-od").forEach((b) =>
+    b.setAttribute("aria-pressed", String(Number(b.dataset.offset) === offset)));
+
+  // Dial.
+  $a("alm-glance-sub").textContent =
+    `${dayLabel(offset, { weekday: "long", month: "long", day: "numeric" })} in ${search.label}. Hover or touch the bar to read any time.`;
+  renderAlmanacDial(day, zone, sun, periods, offset);
+
+  const row = (p) => `
+    <li class="alm-period ${p.kind}">
+      <span class="alm-period-tag">${p.kind === "major" ? "Major" : "Minor"}</span>
+      <span class="alm-period-time">${formatSpan(p.start, p.end, zone)}</span>
+      <span class="alm-period-label">${escapeHtml(p.label)}</span>
+    </li>`;
+  $a("alm-periods").innerHTML = periods.map(row).join("");
+  $a("alm-rating-line").innerHTML = `<strong>${escapeHtml(rating.label)} day.</strong> ${escapeHtml(rating.detail)}`;
+
+  renderAlmanacOverview(day, zone, sun, moon, offset);
+  renderAlmanacGuidance();
+}
+
+// 24-hour bar for the selected day in the searched location's own time: night, twilight and day
+// as a gradient, solunar windows as blocks, and a "now" marker when the day is today.
+function renderAlmanacDial(day, zone, sun, periods, offset) {
+  const dayStart = Date.UTC(day.getFullYear(), day.getMonth(), day.getDate()) - zone.offsetMin * 60000;
+  const pct = (ms) => Math.min(100, Math.max(0, ((ms - dayStart) / 86400000) * 100));
+  const TW = 35 / 1440 * 100; // ~35 min of twilight each side, for the gradient only
+
+  let bg;
+  if (sun.sunrise == null || sun.sunset == null) {
+    bg = sun.polar === "up" ? "var(--alm-day)" : "var(--alm-night)";
+  } else {
+    const r = pct(sun.sunrise), st = pct(sun.sunset);
+    bg = `linear-gradient(90deg, var(--alm-night) ${Math.max(0, r - TW)}%, var(--alm-dawn) ${r}%, var(--alm-day) ${Math.min(100, r + TW)}%,
+      var(--alm-day) ${Math.max(0, st - TW)}%, var(--alm-dawn) ${st}%, var(--alm-night) ${Math.min(100, st + TW)}%)`;
+  }
+
+  const blocks = periods.map((p) => {
+    const a = pct(p.start), b = pct(p.end);
+    return `<span class="alm-dial-p ${p.kind}" style="left:${a}%;width:${Math.max(0.6, b - a)}%"
+      title="${escapeHtml(`${p.label}: ${formatSpan(p.start, p.end, zone)}`)}"></span>`;
+  }).join("");
+
+  const sunMarks = [["Sunrise", sun.sunrise], ["Sunset", sun.sunset]]
+    .filter(([, t]) => t != null)
+    .map(([label, t]) => `<span class="alm-dial-sun" style="left:${pct(t)}%"><em>${label} ${formatClock(t, zone)}</em></span>`).join("");
+
+  const now = Date.now();
+  const nowMark = offset === 0 && now >= dayStart && now < dayStart + 86400000
+    ? `<span class="alm-dial-now" style="left:${pct(now)}%"></span>` : "";
+
+  const dial = $a("alm-dial");
+  dial.style.background = bg;
+  dial.innerHTML = blocks + sunMarks + nowMark;
+  dial.dataset.start = String(dayStart);
+  dial._ctx = { zone, sun, periods };
+}
+
+function almanacDialPointer(e) {
+  const dial = $a("alm-dial");
+  const read = $a("alm-dial-read");
+  if (!dial._ctx || e.type === "pointerleave") { read.hidden = true; return; }
+  const box = dial.getBoundingClientRect();
+  const f = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+  const t = Number(dial.dataset.start) + f * 86400000;
+  const { zone, sun, periods } = dial._ctx;
+  const light = sun.sunrise == null || sun.sunset == null
+    ? (sun.polar === "up" ? "Daylight" : "Dark")
+    : t >= sun.sunrise && t <= sun.sunset ? "Daylight" : "Dark";
+  const inPeriod = periods.find((p) => t >= p.start && t <= p.end);
+  read.innerHTML = `<strong>${formatClock(t, zone)}</strong> ${light}${inPeriod ? ` · <b class="${inPeriod.kind}">${escapeHtml(inPeriod.label)}</b>` : ""}`;
+  read.hidden = false;
+  read.style.left = `${Math.min(box.width - read.offsetWidth, Math.max(0, f * box.width - read.offsetWidth / 2))}px`;
+}
+
+function renderAlmanacOverview(day, zone, sun, moon, offset) {
+  const root = $a("alm-overview");
+  if (!root) return;
+  const { search } = appState;
+  const abbrs = almanacStates();
+  const stateNames = abbrs.map((a) => STATES[a].name);
+  const places = visiblePlaces().length;
+  const scopes = scopesForSearch(search);
+  const when = offset === 0 ? "today" : `on ${formatDay(day, { weekday: "short", month: "short", day: "numeric" })}`;
+
+  // Only claim something about seasons where this app actually holds transcribed season data.
+  let seasonLine;
+  if (scopes.length) {
+    const scope = SEASON_SCOPES[scopes[0]];
+    const openNow = Object.keys(GAME).filter((g) => gameStatus(scopes[0], g, day).kind === "open");
+    seasonLine = openNow.length
+      ? `<strong>${openNow.map((g) => GAME[g].label).join(", ")}</strong> show as open ${when} in ${escapeHtml(scope.name)}.`
+      : `No general seasons show as open ${when} in ${escapeHtml(scope.name)}.`;
+    seasonLine += ` <button type="button" class="link-btn" data-almanac-seasons>Open the season calendar</button>`;
+  } else {
+    seasonLine = stateNames.length
+      ? `Season dates for ${escapeHtml(stateNames.join(" and "))} are not carried in this app — use the official links below.`
+      : `Search a city to see season guidance for its state.`;
+  }
+
+  root.innerHTML = `
+    <section class="bg-section">
+      <div class="panel-heading">
+        <h2>Around ${escapeHtml(search.label)}</h2>
+        <p class="sub">${stateNames.length ? escapeHtml(stateNames.join(", ")) : "United States"} · ${search.radius}-mile search area</p>
+      </div>
+      <div class="alm-stats">
+        <div class="alm-stat"><span class="alm-stat-k">Moon</span><span class="alm-stat-v">${Math.round(moon.illumination * 100)}% · day ${Math.floor(moon.age)}</span></div>
+        <div class="alm-stat"><span class="alm-stat-k">Full moon</span><span class="alm-stat-v">in ~${Math.round(moon.daysToFull)} day${Math.round(moon.daysToFull) === 1 ? "" : "s"}</span></div>
+        <div class="alm-stat"><span class="alm-stat-k">New moon</span><span class="alm-stat-v">in ~${Math.round(moon.daysToNew)} day${Math.round(moon.daysToNew) === 1 ? "" : "s"}</span></div>
+        <div class="alm-stat"><span class="alm-stat-k">Public places mapped</span><span class="alm-stat-v">${places}</span></div>
+      </div>
+      <p class="alm-line">${seasonLine}</p>
+      <p class="alm-foot">Times are for ${escapeHtml(search.label)}${zone.exact ? "" : " in approximate local solar time — a time zone could not be confirmed, so they may be off by an hour"}.
+        Moon figures are calculated here and approximate — not an ephemeris.</p>
     </section>`;
 }
 
-function guidanceSection() {
-  const month = TODAY.getMonth();
+function renderAlmanacGuidance() {
+  const month = almanacUi.month ?? almanacDay().getMonth();
   const g = MONTH_GUIDANCE[month];
   const abbrs = almanacStates();
   const region = ALMANAC_REGIONS[REGION_BY_STATE[abbrs[0]]] || null;
-  const monthName = formatDay(TODAY, { month: "long" });
+  const monthName = formatDay(new Date(2000, month, 1), { month: "long" });
 
-  return `
-    <section class="alm-section">
-      <div class="panel-heading">
-        <h2>Seasonal Guidance</h2>
-        <p class="sub">${escapeHtml(monthName)}${region ? ` in ${escapeHtml(region.label)}` : ""} — general activity patterns, not regulations.</p>
-      </div>
-      <div class="alm-cards">
-        <article class="alm-card hunting">
-          <h3>Wildlife activity</h3>
-          <p>${escapeHtml(g.wildlife)}</p>
-          ${region ? `<p class="alm-card-note">${escapeHtml(region.rut)}</p>` : ""}
-        </article>
-        <article class="alm-card fishing">
-          <h3>Fishing activity</h3>
-          <p>${escapeHtml(g.fishing)}</p>
-          ${region ? `<p class="alm-card-note">${escapeHtml(region.waters)}</p>` : ""}
-        </article>
-      </div>
-      <p class="alm-foot">
-        These are broad seasonal patterns for ${region ? escapeHtml(region.label) : "the United States"}, written to help
-        with planning. They say nothing about what is open, legal or permitted where you are. Check the official
-        links below before you go.
-      </p>
-    </section>`;
+  document.querySelectorAll("#alm-months .alm-mo").forEach((b) => {
+    const m = Number(b.dataset.month);
+    b.setAttribute("aria-pressed", String(m === month));
+    b.classList.toggle("is-now", m === TODAY.getMonth());
+  });
+  $a("alm-guide-sub").textContent =
+    `${monthName}${region ? ` in ${region.label}` : ""} — general activity patterns, not regulations.` +
+    (almanacUi.month == null ? " Follows the day you're planning; tap a month to look ahead." : "");
+  $a("alm-guide-cards").innerHTML = `
+    <article class="alm-card hunting">
+      <h3>Wildlife activity</h3>
+      <p>${escapeHtml(g.wildlife)}</p>
+      ${region ? `<p class="alm-card-note">${escapeHtml(region.rut)}</p>` : ""}
+    </article>
+    <article class="alm-card fishing">
+      <h3>Fishing activity</h3>
+      <p>${escapeHtml(g.fishing)}</p>
+      ${region ? `<p class="alm-card-note">${escapeHtml(region.waters)}</p>` : ""}
+    </article>`;
+  $a("alm-guide-foot").textContent =
+    `These are broad seasonal patterns for ${region ? region.label : "the United States"}, written to help with planning. ` +
+    "They say nothing about what is open, legal or permitted where you are. Check the official links below before you go.";
 }
 
+// Weather is only ever the CURRENT forecast from today — it never follows the day slider.
 function weatherSection() {
   const { search } = appState;
   const { status, weather, error } = almanacState;
@@ -420,17 +648,21 @@ function weatherSection() {
       ${cells.length ? `<div class="alm-stats">${cells
         .map(([k, v]) => `<div class="alm-stat"><span class="alm-stat-k">${escapeHtml(k)}</span><span class="alm-stat-v">${escapeHtml(v)}</span></div>`)
         .join("")}</div>` : ""}
-      ${weather.periods.length ? `<ul class="alm-forecast">${weather.periods
-        .map((p) => `<li><strong>${escapeHtml(p.name)}</strong> <span class="alm-temp">${p.temperature}°${escapeHtml(p.temperatureUnit)}</span>
-          <span>${escapeHtml(p.detailedForecast || p.shortForecast || "")}</span></li>`)
-        .join("")}</ul>` : ""}`;
+      ${weather.periods.length ? `<div class="alm-fc-list">${weather.periods
+        .map((p, i) => `<details class="alm-fc ${p.isDaytime === false ? "night" : "day"}"${i === 0 ? " open" : ""}>
+          <summary><strong>${escapeHtml(p.name)}</strong><span class="alm-temp">${p.temperature}°${escapeHtml(p.temperatureUnit)}</span>
+            <span class="alm-fc-short">${escapeHtml(p.shortForecast || "")}</span></summary>
+          <p>${escapeHtml(p.detailedForecast || p.shortForecast || "")}</p>
+        </details>`)
+        .join("")}</div>` : ""}`;
   }
 
   return `
-    <section class="alm-section">
+    <section class="bg-section">
       <div class="panel-heading">
         <h2>Weather</h2>
-        <p class="sub">National Weather Service forecast for ${escapeHtml(weather?.pointName || search.label)}.</p>
+        <p class="sub">Current National Weather Service forecast for ${escapeHtml(weather?.pointName || search.label)} —
+          from today, whatever day you're planning above.</p>
       </div>
       ${body}
       <div class="alm-links inline">
@@ -462,7 +694,7 @@ function resourcesSection() {
   );
 
   return `
-    <section class="alm-section" id="almanac-official">
+    <section class="bg-section" id="almanac-official">
       <div class="panel-heading">
         <h2>Official Resources</h2>
         <p class="sub">${abbrs.length > 1
@@ -483,30 +715,48 @@ function resourcesSection() {
 }
 
 // ---------- Entry points ----------
+// Fills only the location- and weather-dependent containers; see the header comment for callers.
 function renderAlmanac() {
-  const root = document.getElementById("almanac-body");
-  if (!root) return;
+  if (!$a("alm-day")) return;
+  ensureWeather(appState.search.center);
+  $a("alm-weather").innerHTML = weatherSection();
+  $a("alm-official").innerHTML = resourcesSection();
+  renderAlmanacDay();
+}
 
-  const { search } = appState;
-  ensureWeather(search.center);
+function setAlmanacDay(offset) {
+  almanacUi.offset = Math.min(ALMANAC_DAYS - 1, Math.max(0, offset));
+  renderAlmanacDay();
+}
 
-  const zone = zoneFor(search.center, almanacState.weather);
-  const sun = sunTimes(TODAY, search.center[0], search.center[1]);
-  const moon = moonInfo(TODAY);
-  const periods = solunarPeriods(TODAY, search.center[0], search.center[1], zone);
-
-  root.innerHTML =
-    overviewSection(zone, sun, moon) +
-    moonSection(zone, moon, periods) +
-    guidanceSection() +
-    weatherSection() +
-    resourcesSection();
+// First day in the outlook window (after the selected one, wrapping to the start) matching `test`.
+function findAlmanacDay(test) {
+  for (let i = 1; i <= ALMANAC_DAYS; i++) {
+    const o = (almanacUi.offset + i) % ALMANAC_DAYS;
+    if (test(moonInfo(almanacDay(o)))) return o;
+  }
+  return almanacUi.offset;
 }
 
 function initAlmanac() {
-  document.getElementById("almanac-disclaimer").textContent = ALMANAC_DISCLAIMER;
+  $a("almanac-disclaimer").textContent = ALMANAC_DISCLAIMER;
+  const root = $a("almanac-body");
+  root.innerHTML = almanacShell();
 
-  document.getElementById("almanac-body").addEventListener("click", (e) => {
+  let raf = 0;
+  $a("alm-day").addEventListener("input", (e) => {
+    almanacUi.offset = Number(e.target.value);
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(renderAlmanacDay);
+  });
+
+  const dial = $a("alm-dial");
+  dial.addEventListener("pointermove", almanacDialPointer);
+  dial.addEventListener("pointerdown", almanacDialPointer); // a tap on touch screens
+  dial.addEventListener("pointerleave", almanacDialPointer);
+  $a("alm-dial-read").hidden = true;
+
+  root.addEventListener("click", (e) => {
     if (e.target.closest("[data-almanac-retry]")) {
       almanacState.key = null; // force ensureWeather() to re-fetch the same centre
       return renderAlmanac();
@@ -514,6 +764,24 @@ function initAlmanac() {
     if (e.target.closest("[data-almanac-seasons]")) {
       setView("map");
       setTab("seasons");
+      return;
+    }
+    const od = e.target.closest("[data-offset]");
+    if (od) return setAlmanacDay(Number(od.dataset.offset));
+    const jump = e.target.closest("[data-jump]");
+    if (jump) {
+      const k = jump.dataset.jump;
+      if (k === "today") return setAlmanacDay(0);
+      if (k === "peak") return setAlmanacDay(findAlmanacDay((m) => solunarRating(m).label === "Peak"));
+      if (k === "full") return setAlmanacDay(findAlmanacDay(nearFull));
+      if (k === "new") return setAlmanacDay(findAlmanacDay(nearNew));
+    }
+    const mo = e.target.closest("[data-month]");
+    if (mo) {
+      const m = Number(mo.dataset.month);
+      // Tapping the month already shown hands control back to the day slider.
+      almanacUi.month = almanacUi.month === m ? null : m;
+      renderAlmanacGuidance();
     }
   });
 }

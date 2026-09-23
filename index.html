@@ -56,21 +56,28 @@
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
           d="M9 3.5 3.5 6v14.5L9 18l6 2.5 5.5-2.5V3.5L15 6 9 3.5zM9 3.5V18M15 6v14.5"/>
       </svg>
-      Map Locator
+      <span class="lbl-long">Map Locator</span><span class="lbl-short">Map</span>
     </button>
     <button type="button" role="tab" class="site-tab" data-view="draws" aria-selected="false" tabindex="-1">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
           d="M12 3.5a8.5 8.5 0 108.5 8.5M12 8a4 4 0 104 4M12 12l8.5-8.5M17 3.5h3.5V7"/>
       </svg>
-      Hunting Draws
+      <span class="lbl-long">Hunting Draws</span><span class="lbl-short">Draws</span>
     </button>
     <button type="button" role="tab" class="site-tab" data-view="almanac" aria-selected="false" tabindex="-1">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
           d="M20.4 14.3A8.6 8.6 0 019.7 3.6a8.5 8.5 0 1010.7 10.7z"/>
       </svg>
-      Almanac
+      <span>Almanac</span>
+    </button>
+    <button type="button" role="tab" class="site-tab" data-view="calibers" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+          d="M12 3.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM12 8a4 4 0 100 8 4 4 0 000-8zM12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5"/>
+      </svg>
+      <span class="lbl-long">Big Game &amp; Calibers</span><span class="lbl-short">Calibers</span>
     </button>
   </nav>
 
@@ -197,48 +204,97 @@
   </div>
 
   <!-- HUNTING DRAWS -->
+  <!-- Shell only. draws.js builds every row once and filters them in place, so nothing here is
+       re-rendered on a filter change. Layout classes are shared with the Big Game tab (bg-*). -->
   <section class="view draws-view" id="draws-view" data-view="draws" aria-label="Hunting draws" hidden>
     <div class="draws-scroll">
       <div class="draws-inner">
-        <div class="panel-heading">
-          <h2>Hunting Draws <span class="pill" data-draw-cycle></span></h2>
-          <p class="sub">Application deadlines, draw odds and cost for major limited-entry hunts across the U.S.</p>
-        </div>
-
-        <p class="stale-warning">
+        <p class="alm-disclaimer" role="note">
           <strong>Sample data.</strong> These rows were last reviewed <span id="draw-reviewed"></span> and describe the
           <span data-draw-cycle></span>. Deadlines, odds and fees change every year — confirm on the state agency page
-          linked in each card before you apply.
+          linked in each draw before you apply.
         </p>
 
-        <div class="draw-controls">
-          <label>State <select id="draw-state" aria-label="Filter by state"></select></label>
-          <label>Species <select id="draw-species" aria-label="Filter by species"></select></label>
-          <label>Applicant
-            <select id="draw-residency" aria-label="Filter by residency">
-              <option value="all">Everyone</option>
-              <option value="nonresident">Nonresident</option>
-              <option value="resident">Resident</option>
-            </select>
-          </label>
-          <label class="draw-search">Search
-            <input type="search" id="draw-filter" placeholder="Elk, points, quota…" aria-label="Search draws" />
-          </label>
-          <button type="button" class="btn-secondary small" id="draw-reset">Reset</button>
+        <section class="bg-focus dw-hero" aria-label="Next deadline and your filters">
+          <div class="dw-next" id="dw-next"></div>
+          <div class="dw-prefs">
+            <div class="dw-pref">
+              <span class="bg-k" id="dw-res-label">Applying as</span>
+              <div class="dw-seg" role="radiogroup" aria-labelledby="dw-res-label">
+                <label><input type="radio" name="dw-res" value="all" checked /><span>Everyone</span></label>
+                <label><input type="radio" name="dw-res" value="resident" /><span>Resident</span></label>
+                <label><input type="radio" name="dw-res" value="nonresident" /><span>Nonresident</span></label>
+              </div>
+            </div>
+            <div class="dw-pref bg-range">
+              <label for="dw-budget" class="bg-range-label">
+                <span>Budget</span>
+                <output id="dw-budget-out" for="dw-budget"></output>
+              </label>
+              <input type="range" id="dw-budget" min="1" max="4" step="1" value="4" />
+              <div class="bg-ticks" aria-hidden="true"><span>$</span><span>$$</span><span>$$$</span><span>$$$$</span></div>
+            </div>
+            <div class="dw-stats" id="dw-stats"></div>
+          </div>
+        </section>
+
+        <div class="dw-grid">
+          <section class="bg-section" aria-labelledby="dw-where-h">
+            <div class="bg-section-head">
+              <div class="panel-heading">
+                <h2 id="dw-where-h">Where</h2>
+                <p class="sub">Darker states have more matching draws. Tap one to focus it.</p>
+              </div>
+              <button type="button" class="bg-chip" id="dw-state-all">All states</button>
+            </div>
+            <div class="dw-map" id="dw-map" role="group" aria-label="Filter by state"></div>
+          </section>
+
+          <section class="bg-section" aria-labelledby="dw-when-h">
+            <div class="panel-heading">
+              <h2 id="dw-when-h">When</h2>
+              <p class="sub">Application deadlines over the next 12 months. Tap a month to focus it; tap again to clear.</p>
+            </div>
+            <div class="dw-months" id="draw-months" role="group" aria-label="Filter by deadline month"></div>
+            <h3 class="mini-head">What</h3>
+            <div class="dw-species" id="dw-species" role="group" aria-label="Filter by species"></div>
+          </section>
         </div>
 
-        <h3 class="mini-head">Deadlines by month</h3>
-        <div class="draw-months" id="draw-months" role="group" aria-label="Filter by deadline month"></div>
+        <section class="bg-section" aria-labelledby="dw-list-h">
+          <div class="bg-section-head">
+            <div class="panel-heading">
+              <h2 id="dw-list-h">Draws <span class="pill" data-draw-cycle></span></h2>
+              <p class="sub" id="draw-summary" aria-live="polite"></p>
+            </div>
+            <div class="bg-sort" role="radiogroup" aria-label="Sort draws">
+              <label><input type="radio" name="dw-sort" value="deadline" checked /><span>Deadline</span></label>
+              <label><input type="radio" name="dw-sort" value="odds" /><span>Best odds</span></label>
+              <label><input type="radio" name="dw-sort" value="cost" /><span>Cheapest</span></label>
+            </div>
+          </div>
+          <div class="dw-tools">
+            <label class="dw-search">
+              <span class="sr-only">Search draws</span>
+              <input type="search" id="draw-filter" placeholder="Search elk, points, quota…" />
+            </label>
+            <details class="map-key cost-legend">
+              <summary>Cost scale</summary>
+              <ul id="cost-legend-list"></ul>
+            </details>
+            <button type="button" class="btn-secondary small" id="draw-reset">Reset all</button>
+          </div>
+          <div class="dw-list" id="draw-list"></div>
+          <p class="notice" id="dw-none" hidden>Nothing matches these filters. Try a bigger budget, all states, or clear the month.</p>
+        </section>
 
-        <div class="draw-headline">
-          <p id="draw-summary" aria-live="polite"></p>
-          <details class="map-key cost-legend">
-            <summary>Cost scale</summary>
-            <ul id="cost-legend-list"></ul>
-          </details>
-        </div>
-
-        <div class="draw-list" id="draw-list"></div>
+        <section class="bg-section" aria-labelledby="dw-plan-h">
+          <div class="panel-heading">
+            <h2 id="dw-plan-h">Your application plan</h2>
+            <p class="sub">Pin draws with ☆ to line up their application windows. Saved in this browser only.</p>
+          </div>
+          <div id="dw-plan"></div>
+        </section>
 
         <p class="fine-print">
           <strong>Not official.</strong> Draw odds shown are rough, blended figures for orientation only — real odds
@@ -261,6 +317,17 @@
     </div>
   </section>
 
+  <!-- BIG GAME & CALIBERS -->
+  <section class="view bg-view" id="calibers-view" data-view="calibers" aria-label="Big game and calibers" hidden>
+    <div class="bg-scroll">
+      <div class="bg-inner">
+        <!-- Its own fixed, fully visible disclaimer, like the Almanac's. -->
+        <p class="alm-disclaimer" id="calibers-disclaimer" role="note"></p>
+        <div id="calibers-body"></div>
+      </div>
+    </div>
+  </section>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="states.js"></script>
   <script src="seasons.js"></script>
@@ -269,6 +336,7 @@
   <script src="resources.js"></script>
   <script src="calendar.js"></script>
   <script src="almanac.js"></script>
+  <script src="calibers.js"></script>
   <script src="script.js"></script>
   <script src="draws-data.js"></script>
   <script src="draws.js"></script>
