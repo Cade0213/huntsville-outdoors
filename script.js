@@ -21,7 +21,7 @@ const LIST_LIMIT = 250;
 
 // Shared UI state (also read by calendar.js and resources.js).
 const appState = {
-  search: { ...DEFAULT_SEARCH },
+  search: null, // null until the first search; every renderer shows a "search to begin" state
   activity: "both",
   game: "all",
   filterText: "",
@@ -32,7 +32,7 @@ const appState = {
   shops: [],
   areaStates: [], // state abbreviations touching the search radius
   areaStatePolys: [],
-  loading: { lands: false, osm: false, states: false },
+  loading: { lands: false, osm: false, states: false, stateLands: false },
   errors: {},
 };
 
@@ -63,22 +63,14 @@ function activityKey(place) {
   return place.activities.includes("hunting") ? "hunting" : "fishing";
 }
 
-// True only when `search` is inside the hand-checked North Alabama area — gates the detailed
-// per-place season badges (script.js) which only exist for the 4 North AL WMA/refuge scopes.
-function detailScopeAvailable(search = appState.search) {
-  return search.state === SEASON_COVERAGE.state && milesBetween(search.center, SEASON_COVERAGE.center) <= SEASON_COVERAGE.radiusMi;
-}
-
-// Ordered season-calendar scope ids to offer for a search: the North AL detail scopes inside that
-// area, otherwise the searched state's statewide scope when one exists. Never both — the detailed
-// North AL data stands in for Alabama's statewide entry there, exactly as before this tier existed.
+// Ordered season-calendar scope ids to offer for a search: a detail area's own scopes inside that
+// area, otherwise the searched state's statewide scope when one exists. Never both — a detail area's
+// data stands in for its state's statewide entry there. See coverage.js.
 function scopesForSearch(search) {
-  if (!search) return [];
-  if (detailScopeAvailable(search)) {
-    return Object.keys(SEASON_SCOPES).filter((id) => SEASON_SCOPES[id].tier === "detail");
-  }
-  const swId = search.state ? `${search.state}-statewide` : null;
-  return swId && SEASON_SCOPES[swId] ? [swId] : [];
+  const area = detailAreaFor(search);
+  if (area) return area.scopes;
+  const swId = statewideScopeFor(search?.state);
+  return swId ? [swId] : [];
 }
 
 function seasonsAvailable() {
@@ -95,7 +87,9 @@ function curatedTypeLabel(loc) {
 }
 
 // ---------- Map ----------
-const map = L.map("map", { zoomControl: false, zoomSnap: 0.25, preferCanvas: true }).setView(HUNTSVILLE, 9);
+// Opens on the contiguous U.S. with no search; the #map-prompt overlay asks for a location.
+const US_BOUNDS = [[24.5, -125], [49.5, -66.9]];
+const map = L.map("map", { zoomControl: false, zoomSnap: 0.25, preferCanvas: true }).fitBounds(US_BOUNDS);
 L.control.zoom({ position: "topright" }).addTo(map);
 
 // We avoid tile.openstreetmap.org (blocks requests with no Referer, e.g. file://) and CARTO (API key).
@@ -126,13 +120,13 @@ const layerById = new Map();
 // Leaflet needs to be told when its container changes size (panel toggle, orientation change).
 new ResizeObserver(() => map.invalidateSize()).observe($("map"));
 
-// ---------- Season status (North Alabama hand-checked places only) ----------
+// ---------- Season status (hand-checked places in a detail area only) ----------
 function selectedGamesList() {
   return appState.game === "all" ? Object.keys(GAME) : [appState.game];
 }
 
 function placeSeasonStatus(place) {
-  if (!place.seasonScope || !detailScopeAvailable()) return null;
+  if (!scopeShownForPlace(place, appState.search)) return null;
   const statuses = selectedGamesList().map((g) => gameStatus(place.seasonScope, g, TODAY));
   if (statuses.some((s) => s.kind === "open")) return "open";
   if (statuses.some((s) => s.kind === "upcoming" && daysBetween(TODAY, s.date) <= SOON_DAYS)) return "soon";
@@ -169,12 +163,18 @@ function statusChip(place) {
   return "";
 }
 
+// Hand-checked places and official state agency records (coverage.js) say this land is open to
+// hunting or fishing. PAD-US and OpenStreetMap results only say it is public land or water.
+function isConfirmed(place) {
+  return place.source === "curated" || place.source === "state";
+}
+
 // ---------- Building the place list ----------
 // Every hand-checked place, each flagged with whether it falls inside the search radius.
 // Nothing is dropped here: mergeLands() may later replace a rough placeholder outline with the
 // real PAD-US boundary and recompute the distance, so the radius is enforced in visiblePlaces().
 function curatedPlaces(center, radius) {
-  return LOCATIONS.map((loc) => {
+  return DETAIL_AREAS.flatMap((area) => area.places.map((loc) => {
     const polygons = loc.kind === "zone" ? [[loc.coords]] : null;
     const point = polygons ? markerPointFor(polygons) : loc.coords;
     return {
@@ -183,10 +183,10 @@ function curatedPlaces(center, radius) {
       polygons,
       point,
       typeLabel: curatedTypeLabel(loc),
-      state: "AL",
+      state: area.state,
       distanceMi: polygons ? milesToPolygons(center, polygons) : milesBetween(center, point),
     };
-  })
+  }))
     .map((p) => ({ ...p, outsideRadius: p.distanceMi > radius }));
 }
 
@@ -210,6 +210,31 @@ function mergeLands(places, lands, center) {
   return [...places, ...lands.filter((l) => !used.has(l.id))];
 }
 
+// Official agency records replace their PAD-US twin (same name). The PAD-US boundary is kept when
+// there is one, since PAD-US is the preferred boundary source; the agency record supplies the
+// hunting status, facts and links. Hidden records (FWP "NO HUNTING", closed BMAs) still remove
+// their twin, so PAD-US can't list that land as likely hunting ground by name alone.
+function mergeStateLands(places, stateLands, center) {
+  const padusByName = new Map(places.filter((p) => p.source === "padus").map((p) => [normalizeName(p.name), p]));
+  const drop = new Set();
+  const shown = [];
+  for (const s of stateLands) {
+    const twin = padusByName.get(normalizeName(s.name));
+    if (twin) {
+      drop.add(twin.id);
+      s.polygons = twin.polygons;
+      s.kind = "zone";
+      s.point = twin.point;
+      s.acres = s.acres || twin.acres;
+      s.distanceMi = milesToPolygons(center, twin.polygons);
+      s.boundaryFrom = "padus";
+    }
+    if (!s.hidden) shown.push({ ...s, outsideRadius: s.distanceMi > appState.search.radius });
+  }
+  const shownIds = new Set(shown.map((s) => s.id));
+  return [...places.filter((p) => !drop.has(p.id) && !shownIds.has(p.id)), ...shown];
+}
+
 function assignStates() {
   for (const p of appState.places) p.state = stateForPoint(p.point, appState.areaStatePolys, p.state || appState.search.state);
 }
@@ -221,11 +246,11 @@ function visiblePlaces() {
       (p) =>
         !p.outsideRadius &&
         (appState.activity === "both" || p.activities.includes(appState.activity)) &&
-        (appState.showUnconfirmed || p.source === "curated") &&
+        (appState.showUnconfirmed || isConfirmed(p)) &&
         (!q || normalizeName(p.name).includes(q))
     )
-    // Hand-checked places first (they have real rules and seasons), then everything else by distance.
-    .sort((a, b) => (a.source === "curated" ? 0 : 1) - (b.source === "curated" ? 0 : 1) || a.distanceMi - b.distanceMi);
+    // Confirmed places first (hand-checked or official agency records), then everything else by distance.
+    .sort((a, b) => (isConfirmed(a) ? 0 : 1) - (isConfirmed(b) ? 0 : 1) || a.distanceMi - b.distanceMi);
 }
 
 // ---------- Map layers ----------
@@ -254,7 +279,7 @@ function markerFor(place, selected) {
   const key = activityKey(place);
   const color = COLORS[key];
   const point = markerPoint(place);
-  if (place.source === "curated") {
+  if (isConfirmed(place)) {
     return L.marker(point, {
       title: place.name,
       riseOnHover: true,
@@ -279,7 +304,7 @@ function markerFor(place, selected) {
 
 function shapeFor(place, selected) {
   const color = COLORS[activityKey(place)];
-  const curated = place.source === "curated";
+  const curated = isConfirmed(place);
   return L.polygon(place.polygons, {
     bubblingMouseEvents: false,
     color,
@@ -291,10 +316,22 @@ function shapeFor(place, selected) {
   });
 }
 
+// Credits whichever state agencies' records are on the map right now, next to the tile credits.
+let stateAttribution = "";
+function updateStateAttribution(places) {
+  const agencies = [...new Set(places.filter((p) => p.source === "state").map((p) => p.provenance.agency))];
+  const text = agencies.map(escapeHtml).join(", ");
+  if (text === stateAttribution) return;
+  if (stateAttribution) map.attributionControl.removeAttribution(stateAttribution);
+  if (text) map.attributionControl.addAttribution(text);
+  stateAttribution = text;
+}
+
 function renderMapLayers() {
   placesLayer.clearLayers();
   layerById.clear();
   const places = visiblePlaces();
+  updateStateAttribution(places);
   const bind = (layer, place) =>
     layer
       .bindTooltip(escapeHtml(place.name), { direction: "top", offset: [0, -8], sticky: layer instanceof L.Polygon })
@@ -347,6 +384,19 @@ function activityChips(place) {
 function renderList() {
   const places = visiblePlaces();
   const { search, loading, errors } = appState;
+  renderCoverageNote();
+  if (!search) {
+    $("tab-count").textContent = "";
+    $("results-summary").innerHTML = "";
+    $("results-status").innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">🗺️</div>
+        <h3>Search a location to get started</h3>
+        <p>Enter a U.S. city or town above to see public hunting and fishing land nearby.</p>
+      </div>`;
+    $("results-list").innerHTML = "";
+    return;
+  }
 
   $("tab-count").textContent = places.length ? places.length : "";
   $("results-summary").innerHTML = places.length
@@ -355,8 +405,11 @@ function renderList() {
 
   const lines = [];
   if (loading.lands) lines.push(`<p class="loading-line"><span class="spinner"></span>Searching federal &amp; state public lands…</p>`);
+  if (loading.stateLands && appState.areaStates.some(stateLayersFor))
+    lines.push(`<p class="loading-line"><span class="spinner"></span>Loading official state wildlife agency lands…</p>`);
   if (loading.osm) lines.push(`<p class="loading-line"><span class="spinner"></span>Finding fishing piers &amp; access spots…</p>`);
   if (errors.lands) lines.push(`<p class="notice">Couldn't load public lands (${escapeHtml(errors.lands)}). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
+  if (errors.stateLands) lines.push(`<p class="notice">Couldn't load official state agency lands (${escapeHtml(errors.stateLands)}). Areas below may be missing hunting status and official maps. <button type="button" class="link-btn" data-retry>Try again</button></p>`);
   if (errors.osm) lines.push(`<p class="notice">Fishing spots & shops are temporarily unavailable (OpenStreetMap servers are busy). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
   if (!loading.lands && !loading.osm && !places.length && !errors.lands)
     lines.push(`<p class="notice">Nothing matches these filters. Try a larger radius, “Both”, or clear the name filter.</p>`);
@@ -385,7 +438,47 @@ function renderList() {
       : "");
 }
 
+// How much this site knows about the searched state (coverage.js), stated plainly above the list.
+function renderCoverageNote() {
+  const el = $("coverage-note");
+  const { search } = appState;
+  const level = coverageLevel(search);
+  el.hidden = !level;
+  if (!level) return;
+  const stateName = STATES[search.state]?.name || "this state";
+  const agency = primaryAgency(search.state);
+  const agencyLink = agency
+    ? `<a href="${escapeHtml(agency.url)}" target="_blank" rel="noopener">${escapeHtml(agency.name)}</a>`
+    : "the state wildlife agency";
+  const statewide = statewideScopeFor(search.state);
+  const [tag, text] =
+    level === "detail"
+      ? ["Detailed", `Hand-checked places with their own season dates for ${escapeHtml(detailAreaFor(search).label)}.`]
+      : level === "stateLands"
+        ? [
+            "Official state lands",
+            `${escapeHtml(stateLayersFor(search.state).summary.replace(/^./, (c) => c.toUpperCase()))} come straight from ${agencyLink}, ` +
+              `including whether hunting is allowed. ` +
+              (statewide ? "Season dates are a statewide summary." : "Season dates aren't built in yet."),
+          ]
+      : level === "statewide"
+        ? ["Statewide seasons", `Season dates for ${escapeHtml(stateName)} are a statewide summary. Area-specific rules aren't built in.`]
+        : ["Boundaries only", `Season dates for ${escapeHtml(stateName)} aren't built in yet. Check ${agencyLink}.`];
+  el.innerHTML = `<span class="coverage-tag coverage-${level}">${tag}</span> ${text}`;
+}
+
 // ---------- Detail panel ----------
+// Where an agency record came from, and when: the layer (linked to its official service page) and the
+// retrieval time. The exact request URLs are kept on place.provenance.requests.
+function stateCredit(place) {
+  const { agency, layerName, layerUrl, retrievedAt } = place.provenance;
+  const when = new Date(retrievedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const boundary = place.boundaryFrom === "padus"
+    ? ' Boundary: <a href="https://www.usgs.gov/programs/gap-analysis-project/science/protected-areas" target="_blank" rel="noopener">USGS PAD-US</a> (simplified).'
+    : "";
+  return `Data: ${escapeHtml(agency)}, <a href="${escapeHtml(layerUrl)}" target="_blank" rel="noopener">${escapeHtml(layerName)}</a>, retrieved ${escapeHtml(when)}.${boundary}`;
+}
+
 function landNote(place) {
   if (place.source === "osm")
     return "Mapped by OpenStreetMap volunteers. It may be private, closed, or out of date, and fishing rules still apply. Confirm access before you go.";
@@ -400,8 +493,8 @@ function landNote(place) {
 
 function seasonsBlock(place) {
   if (!place.seasonScope) return "";
-  if (!detailScopeAvailable())
-    return `<p class="notice">Season dates are only shown when you search inside ${SEASON_COVERAGE.label}.</p>`;
+  if (!scopeShownForPlace(place, appState.search))
+    return `<p class="notice">Season dates are only shown when you search inside ${escapeHtml(detailAreaForScope(place.seasonScope)?.label || "this area")}.</p>`;
   const rows = selectedGamesList()
     .map(
       (g) => `<li><span class="game-dot" style="background:${GAME[g].color}"></span>
@@ -434,11 +527,13 @@ function renderDetail(place) {
     place.access && ["Access", escapeHtml(place.access)],
     place.acres ? ["Size", `~${place.acres.toLocaleString()} acres`] : null,
     place.state && STATES[place.state] ? ["State", STATES[place.state].name] : null,
+    ...(place.facts || []).map(([k, v]) => [escapeHtml(k), escapeHtml(v)]),
   ].filter(Boolean);
 
   const actions = [];
   const officialUrl = place.mapUrl || place.sourceUrl || (agency && agency.url);
   if (officialUrl) actions.push(`<a class="btn-primary block" href="${escapeHtml(officialUrl)}" target="_blank" rel="noopener">Official Map &amp; Rules &rarr;</a>`);
+  if (place.pageLink) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.pageLink[1])}" target="_blank" rel="noopener">${escapeHtml(place.pageLink[0])}</a>`);
   actions.push(`<a class="btn-secondary" href="https://www.google.com/maps/dir/?api=1&destination=${place.point[0]},${place.point[1]}" target="_blank" rel="noopener">Directions</a>`);
   if (place.osmUrl) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.osmUrl)}" target="_blank" rel="noopener">View on OpenStreetMap</a>`);
   actions.push(`<button type="button" class="btn-secondary" data-zoom="${escapeHtml(place.id)}">Zoom to</button>`);
@@ -453,7 +548,7 @@ function renderDetail(place) {
     </header>
     <p class="detail-desc">${escapeHtml(place.description)}</p>
     <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
-    ${place.source !== "curated" ? `<div class="notice warn"><strong>Not confirmed open to hunting or fishing.</strong> ${escapeHtml(landNote(place))}</div>` : ""}
+    ${!isConfirmed(place) ? `<div class="notice warn"><strong>Not confirmed open to hunting or fishing.</strong> ${escapeHtml(landNote(place))}</div>` : ""}
     ${place.placeholderBoundary ? `<p class="notice">The dashed shape is a rough placeholder, not the official boundary. Search again to load the real boundary.</p>` : ""}
     ${seasonsBlock(place)}
     <div class="detail-actions">${actions.join("")}</div>
@@ -461,6 +556,8 @@ function renderDetail(place) {
     <p class="data-credit">${
       place.source === "curated"
         ? "Listed place. Coordinates are approximate."
+        : place.source === "state"
+          ? stateCredit(place)
         : place.source === "padus"
           ? 'Boundary: <a href="https://www.usgs.gov/programs/gap-analysis-project/science/protected-areas" target="_blank" rel="noopener">USGS PAD-US</a> (simplified).'
           : 'Location: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">&copy; OpenStreetMap contributors</a>.'
@@ -533,8 +630,13 @@ function refreshAll() {
 }
 
 function renderDisclaimerAgency() {
-  const agency = agencyForDisclaimer(appState.search.state);
   const link = $("disclaimer-agency");
+  if (!appState.search) {
+    link.textContent = "state wildlife agency";
+    link.removeAttribute("href");
+    return;
+  }
+  const agency = agencyForDisclaimer(appState.search.state);
   link.textContent = agency.name;
   link.href = agency.url;
 }
@@ -550,12 +652,13 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
   const { signal } = searchAbort;
 
   appState.search = { ...search }; // seasonsAvailable() reads this
+  $("map-prompt").hidden = true;
   appState.selectedId = null;
   appState.places = curatedPlaces(search.center, search.radius);
   appState.shops = [];
   appState.areaStates = [search.state].filter(Boolean);
   appState.areaStatePolys = [];
-  appState.loading = { lands: true, osm: true, states: true };
+  appState.loading = { lands: true, osm: true, states: true, stateLands: true };
   appState.errors = {};
 
   $("city-search").value = search.label;
@@ -604,14 +707,32 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
       renderList();
     });
 
+  // Official agency layers for every state in the area that has any (coverage.js). They merge only
+  // once PAD-US has also settled, because they replace PAD-US twins by name.
+  let stateLands = [];
+  const stateLandsTask = statesTask
+    .then(() => (stale() ? [] : fetchStateLands(appState.areaStates, search.center, search.radius, signal)))
+    .then((lands) => (stateLands = lands))
+    .catch((err) => {
+      if (!stale() && !signal.aborted) appState.errors.stateLands = err.name === "TimeoutError" ? "timed out" : err.message;
+    });
+  const mergeTask = Promise.allSettled([landsTask, stateLandsTask]).then(() => {
+    if (stale()) return;
+    appState.places = mergeStateLands(appState.places, stateLands, search.center);
+    assignStates();
+    appState.loading.stateLands = false;
+    renderMapLayers();
+    renderList();
+  });
+
   fetchOsmFeatures(search.center, search.radius, signal)
     .then(async ({ water, shops }) => {
       if (stale()) return;
-      await Promise.allSettled([statesTask, landsTask]);
+      await Promise.allSettled([statesTask, landsTask, mergeTask]);
       if (stale()) return;
-      // Skip mapped spots that duplicate a hand-checked place or a same-named public land (e.g. a fishing access site).
-      const curatedFishing = appState.places.filter((p) => p.source === "curated" && p.activities.includes("fishing"));
-      const lands = appState.places.filter((p) => p.source === "padus");
+      // Skip mapped spots that duplicate a confirmed fishing place or a same-named public land (e.g. a fishing access site).
+      const curatedFishing = appState.places.filter((p) => isConfirmed(p) && p.activities.includes("fishing"));
+      const lands = appState.places.filter((p) => (p.source === "padus" || p.source === "state") && p.polygons);
       const fresh = water.filter((w) => {
         if (curatedFishing.some((c) => milesBetween(c.point, w.point) < 0.3)) return false;
         const key = normalizeName(w.name);
@@ -657,8 +778,8 @@ function readUrl() {
   const p = new URLSearchParams(location.search);
   const lat = parseFloat(p.get("lat"));
   const lng = parseFloat(p.get("lng"));
-  const radius = [10, 25, 50, 100].includes(+p.get("r")) ? +p.get("r") : DEFAULT_SEARCH.radius;
-  if (!p.get("q") || Number.isNaN(lat) || Number.isNaN(lng)) return { ...DEFAULT_SEARCH, radius };
+  const radius = [10, 25, 50, 100].includes(+p.get("r")) ? +p.get("r") : 50;
+  if (!p.get("q") || Number.isNaN(lat) || Number.isNaN(lng)) return null; // no search yet: show the prompt
   return { label: p.get("q"), center: [lat, lng], state: stateAbbr(p.get("st")), radius };
 }
 
@@ -744,7 +865,7 @@ $("search-form").addEventListener("submit", async (e) => {
   clearTimeout(suggestTimer);
   const text = searchInput.value.trim();
   if (!suggestionsEl.hidden && suggestions[activeIndex]) return chooseSuggestion(suggestions[activeIndex]);
-  if (text === appState.search.label) return runSearch({ ...appState.search, radius: +$("radius-select").value });
+  if (appState.search && text === appState.search.label) return runSearch({ ...appState.search, radius: +$("radius-select").value });
   if (text.length < 2) return;
 
   renderSuggestions("Searching…");
@@ -764,6 +885,7 @@ $("search-form").addEventListener("submit", async (e) => {
 });
 
 $("radius-select").addEventListener("change", (e) => {
+  if (!appState.search) return; // nothing searched yet; the new radius applies to the first search
   runSearch({ ...appState.search, radius: +e.target.value });
 });
 
@@ -817,7 +939,11 @@ document.addEventListener("click", (e) => {
     return setTab("seasons");
   }
   if (t.closest("[data-retry]")) return retrySearch();
-  if (t.closest("[data-search-default]")) return runSearch({ ...DEFAULT_SEARCH });
+  const sample = t.closest("[data-sample-area]");
+  if (sample) {
+    const area = DETAIL_AREAS.find((a) => a.id === sample.dataset.sampleArea);
+    if (area) return runSearch({ ...area.sampleSearch });
+  }
 });
 
 // Click on empty map closes the detail view.
@@ -930,4 +1056,6 @@ restoreSplit();
 initCalendar();
 initAlmanac();
 initCalibers();
-runSearch(readUrl(), { updateUrl: false });
+const initialSearch = readUrl();
+if (initialSearch) runSearch(initialSearch, { updateUrl: false });
+else refreshAll();

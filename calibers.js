@@ -545,7 +545,7 @@ function renderCalibers() {
   const root = $bg("bg-official");
   if (!root) return;
   const { search, areaStates } = appState;
-  const abbrs = (areaStates.length ? areaStates : [search.state]).filter((a) => STATES[a]);
+  const abbrs = (areaStates.length ? areaStates : [search?.state]).filter((a) => STATES[a]);
   const cards = abbrs.flatMap((a) =>
     STATES[a].agencies.map(([name, url]) => `
       <a class="alm-agency" href="${escapeHtml(url)}" target="_blank" rel="noopener">

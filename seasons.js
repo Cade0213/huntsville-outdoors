@@ -10,14 +10,7 @@
 const SEASON_YEAR = "2026–27";
 const SEASON_DATA_THROUGH = "2027-08-31"; // AL licenses & WMA permits expire Aug 31
 
-// Season dates only exist for North Alabama. The calendar and map season rings are shown only when
-// the searched city is inside this area; everywhere else we link to the state agency instead.
-const SEASON_COVERAGE = {
-  state: "AL",
-  center: [34.7304, -86.5861], // Huntsville
-  radiusMi: 60, // Madison/Limestone zones; farther south (e.g. Birmingham) uses different deer & turkey zones
-  label: "North Alabama",
-};
+// Which areas get which scopes (detail vs statewide) is decided in coverage.js.
 
 const GAME = {
   deer:      { label: "Deer",              color: "#8a4b1f" },

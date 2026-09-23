@@ -13,7 +13,7 @@
     <p class="disclaimer-text">
       <strong>⚠️ Unofficial source.</strong>
       This is not an official source. Always verify current seasons, permits, regulations, and access with the
-      <a id="disclaimer-agency" href="https://www.outdooralabama.com" target="_blank" rel="noopener">Alabama Department of Conservation and Natural Resources (Outdoor Alabama)</a>
+      <a id="disclaimer-agency" target="_blank" rel="noopener">state wildlife agency</a>
       and the managing agency. Regulations change.
     </p>
     <button type="button" class="disclaimer-toggle" id="disclaimer-toggle" aria-expanded="false">More</button>
@@ -124,6 +124,7 @@
             </details>
           </div>
 
+          <p class="coverage-note" id="coverage-note" hidden></p>
           <div id="results-status"></div>
           <ul class="results" id="results-list"></ul>
         </section>
@@ -199,6 +200,10 @@
 
     <main class="map-area">
       <div id="map" aria-label="Map of public hunting and fishing areas"></div>
+      <div class="map-prompt" id="map-prompt" role="status">
+        <strong>Search a location to get started</strong>
+        <span>Enter a U.S. city or town above to find public hunting and fishing land nearby.</span>
+      </div>
       <button type="button" class="map-toggle" id="map-toggle" aria-pressed="false">Expand map</button>
     </main>
   </div>
@@ -312,6 +317,11 @@
         <!-- Its own element, not the global #disclaimer bar: that one is per-state and clamped on
              phones. This text is fixed and must stay fully visible. -->
         <p class="alm-disclaimer" id="almanac-disclaimer" role="note"></p>
+        <div class="empty-state" id="almanac-empty" hidden>
+          <div class="empty-icon" aria-hidden="true">🌙</div>
+          <h3>Search a location to see its almanac</h3>
+          <p>Sunrise, sunset, moon and solunar times and the weather forecast are for the place you search.</p>
+        </div>
         <div id="almanac-body"></div>
       </div>
     </div>
@@ -332,6 +342,7 @@
   <script src="states.js"></script>
   <script src="seasons.js"></script>
   <script src="data.js"></script>
+  <script src="coverage.js"></script>
   <script src="live.js"></script>
   <script src="resources.js"></script>
   <script src="calendar.js"></script>

@@ -224,6 +224,15 @@ function renderCalendarEmpty() {
   document.querySelectorAll("[data-cal-area]").forEach((el) => (el.textContent = ""));
 
   const { search } = appState;
+  if (!search) {
+    document.getElementById("cal-empty").innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">📅</div>
+        <h3>Search a location to see its seasons</h3>
+        <p>Season dates depend on the state and area you hunt. Enter a U.S. city or town above.</p>
+      </div>`;
+    return;
+  }
   const abbrs = appState.areaStates.length ? appState.areaStates : [search.state].filter(Boolean);
   const agencyLinks = abbrs
     .filter((a) => STATES[a])
@@ -234,11 +243,11 @@ function renderCalendarEmpty() {
     <div class="empty-state">
       <div class="empty-icon" aria-hidden="true">📅</div>
       <h3>Season dates aren't built in for ${escapeHtml(search.label)} yet</h3>
-      <p>We have hand-checked seasons for ${SEASON_COVERAGE.label} and statewide summaries for
+      <p>We have hand-checked seasons for ${DETAIL_AREAS.map((a) => escapeHtml(a.label)).join(", ")} and statewide summaries for
       ${coveredStates.length ? coveredStates.join(", ") : "a growing list of states"}. Rather than guess for other areas, we point you
       to the official source. Season dates, zones and bag limits are set by each state:</p>
       ${agencyLinks ? `<ul class="agency-links">${agencyLinks}</ul>` : ""}
-      <button type="button" class="btn-secondary" data-search-default>See the North Alabama calendar</button>
+      ${DETAIL_AREAS.map((a) => `<button type="button" class="btn-secondary" data-sample-area="${escapeHtml(a.id)}">See the ${escapeHtml(a.label)} calendar</button>`).join("")}
     </div>`;
 }
 

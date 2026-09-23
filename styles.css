@@ -255,6 +255,29 @@ body.on-draws .search { display: none; }
   padding: 12px 16px 24px;
 }
 .map-area { position: relative; min-height: 0; }
+/* Shown over the map until the first search. Ignores the pointer so the map still pans underneath. */
+.map-prompt {
+  position: absolute;
+  z-index: 500; /* above Leaflet panes (400), below its controls (800+) */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(360px, calc(100% - 32px));
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+  background: var(--paper);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+  pointer-events: none;
+}
+.map-prompt strong { font-size: 1.05rem; color: var(--forest-dark); }
+.map-prompt span { font-size: 0.9rem; color: var(--muted); line-height: 1.4; }
+.map-prompt[hidden] { display: none; }
 
 /* Drag handle between the panel and the map. */
 .resizer {
@@ -364,6 +387,20 @@ body.on-draws .search { display: none; }
   padding-top: 10px;
 }
 #results-summary { margin: 0; font-size: 0.85rem; color: var(--muted); line-height: 1.4; }
+.coverage-note { margin: 8px 0 0; font-size: 0.8rem; color: var(--muted); line-height: 1.45; }
+.coverage-note[hidden] { display: none; }
+.coverage-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  color: var(--bark);
+  background: var(--sand);
+}
+.coverage-tag.coverage-detail { color: #fff; background: var(--forest); border-color: var(--forest); }
 .map-key { flex: none; font-size: 0.8rem; position: relative; }
 .map-key summary { cursor: pointer; font-weight: 700; color: var(--forest); list-style: none; }
 .map-key summary::-webkit-details-marker { display: none; }

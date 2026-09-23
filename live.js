@@ -356,6 +356,16 @@ function landDescription(place) {
   return `${place.typeLabel} managed by ${place.manager}. ${access}`;
 }
 
+// How far a generalized edge may sit from the true boundary, in degrees (~111 km each).
+// Sized to about one screen pixel at the zoom each radius is usually read at, so boundaries
+// follow the real parcel lines instead of being cut into long chords. The old blanket
+// radiusMi/8000 worked out to ~700 m at the default 50 mi, which is ~44 px at zoom 13.
+// 100 mi stays coarse on purpose: it opens near zoom 6.5 (~1.2 km/px), where anything finer
+// is sub-pixel, and those searches can pull 179 parcels / 130k+ vertices in forested states.
+function geometryOffset(radiusMi) {
+  return radiusMi <= 10 ? 0.00015 : radiusMi <= 25 ? 0.0002 : radiusMi <= 50 ? 0.0004 : 0.006;
+}
+
 async function fetchPublicLands(center, radiusMi, signal) {
   const minAcres = radiusMi <= 10 ? 5 : radiusMi <= 25 ? 20 : radiusMi <= 50 ? 40 : 100;
   const designations = PADUS_DESIGNATIONS.map((d) => `'${d}'`).join(",");
@@ -373,13 +383,7 @@ async function fetchPublicLands(center, radiusMi, signal) {
     spatialRel: "esriSpatialRelIntersects",
     outFields: "Unit_Nm,DesTp_Desc,MngNm_Desc,MngTp_Desc,Pub_Access,GIS_Acres",
     returnGeometry: true,
-    // How far a generalized edge may sit from the true boundary, in degrees (~111 km each).
-    // Sized to about one screen pixel at the zoom each radius is usually read at, so boundaries
-    // follow the real parcel lines instead of being cut into long chords. The old blanket
-    // radiusMi/8000 worked out to ~700 m at the default 50 mi, which is ~44 px at zoom 13.
-    // 100 mi stays coarse on purpose: it opens near zoom 6.5 (~1.2 km/px), where anything finer
-    // is sub-pixel, and those searches can pull 179 parcels / 130k+ vertices in forested states.
-    maxAllowableOffset: radiusMi <= 10 ? 0.00015 : radiusMi <= 25 ? 0.0002 : radiusMi <= 50 ? 0.0004 : 0.006,
+    maxAllowableOffset: geometryOffset(radiusMi),
     // 5 decimal places is ~1 m. At 4 (~11 m) coordinates snapped to a grid coarser than a pixel
     // at zoom 14, which stair-stepped the edges no matter how fine the tolerance above was.
     geometryPrecision: 5,
@@ -445,6 +449,104 @@ async function fetchPublicLands(center, radiusMi, signal) {
     place.description = landDescription(place);
     return place;
   });
+}
+
+// ---------------- Official state agency layers (see STATE_LAYERS in coverage.js) ----------------
+
+// One ArcGIS layer query, paged until complete. ArcGIS flags a truncated page with
+// `exceededTransferLimit` at the top level for f=json but under `properties` for f=geojson, so both
+// are checked; missing that once silently cut a statewide load to exactly 1,000 rows.
+async function arcgisQueryAll(layerUrl, params, signal) {
+  const features = [];
+  const requests = [];
+  for (let offset = 0; ; ) {
+    const url = `${layerUrl}/query?${queryString({ ...params, orderByFields: "OBJECTID", resultOffset: offset, f: "geojson" })}`;
+    requests.push(url);
+    const data = await fetchJson(url, { signal, timeoutMs: 30000 });
+    if (data.error) throw new Error(data.error.message || "ArcGIS error");
+    const page = data.features || [];
+    features.push(...page);
+    const truncated = data.exceededTransferLimit || data.properties?.exceededTransferLimit;
+    if (!truncated || !page.length) break;
+    offset += page.length;
+  }
+  return { features, requests };
+}
+
+// Every record of one agency layer within `radiusMi` of `center`, as places (hidden ones included —
+// the caller uses them for de-duplication). Each place records the exact request(s) and time.
+async function fetchStateLayer(stateAbbrev, agency, layer, center, radiusMi, signal) {
+  const spatial = {
+    geometry: `${center[1]},${center[0]}`,
+    geometryType: "esriGeometryPoint",
+    inSR: 4326,
+    distance: radiusMi,
+    units: "esriSRUnit_StatuteMile",
+    spatialRel: "esriSpatialRelIntersects",
+    outSR: 4326,
+  };
+  const closedKeys = new Set();
+  if (layer.closedLayer) {
+    const { features } = await arcgisQueryAll(
+      layer.closedLayer.url,
+      { where: layer.closedLayer.where, outFields: layer.closedLayer.outFields, returnGeometry: false, ...spatial },
+      signal
+    );
+    features.forEach((f) => closedKeys.add(String(layer.groupBy(f.properties))));
+  }
+  const { features, requests } = await arcgisQueryAll(
+    layer.url,
+    {
+      where: "1=1",
+      outFields: layer.outFields,
+      returnGeometry: true,
+      ...(layer.geometry === "polygon" ? { maxAllowableOffset: geometryOffset(radiusMi), geometryPrecision: 5 } : {}),
+      ...spatial,
+    },
+    signal
+  );
+  const retrievedAt = new Date().toISOString();
+
+  // A WMA or BMA can come back as several polygons; group them into one place like PAD-US parcels.
+  const groups = new Map();
+  for (const f of features) {
+    if (!f.geometry) continue;
+    const key = String(layer.groupBy(f.properties));
+    const g = groups.get(key) || { attrs: f.properties, polygons: [], point: null };
+    if (layer.geometry === "polygon") g.polygons.push(...geometryToPolygons(f.geometry));
+    else if (!g.point) g.point = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
+    groups.set(key, g);
+  }
+
+  return [...groups.entries()].map(([key, g]) => {
+    const p = layer.toPlace(g.attrs, { closed: closedKeys.has(key) });
+    const polygons = g.polygons.length ? g.polygons : null;
+    const point = polygons ? markerPointFor(polygons) : g.point;
+    return {
+      ...p,
+      id: `${layer.id}-${normalizeName(key).replace(/ /g, "-")}`,
+      source: "state",
+      state: stateAbbrev,
+      manager: p.manager || agency,
+      kind: polygons ? "zone" : "point",
+      polygons,
+      point,
+      acres: p.acres ? Math.round(p.acres) : undefined,
+      facts: (p.facts || []).filter(Boolean),
+      distanceMi: polygons ? milesToPolygons(center, polygons) : milesBetween(center, point),
+      provenance: { agency, layerName: layer.name, layerUrl: layer.url, requests, retrievedAt },
+    };
+  });
+}
+
+// All agency layers for every state in `stateAbbrevs` that has any. One failing layer fails the
+// whole set, so a half-loaded state never looks complete.
+async function fetchStateLands(stateAbbrevs, center, radiusMi, signal) {
+  const jobs = stateAbbrevs.flatMap((abbr) => {
+    const cfg = stateLayersFor(abbr);
+    return cfg ? cfg.layers.map((layer) => fetchStateLayer(abbr, cfg.agency, layer, center, radiusMi, signal)) : [];
+  });
+  return (await Promise.all(jobs)).flat();
 }
 
 // ---------------- Fishing piers, fishing spots & shops (OpenStreetMap) ----------------

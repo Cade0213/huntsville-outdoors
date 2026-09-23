@@ -19,7 +19,6 @@
 //                duplicate "unconfirmed" PAD-US result is dropped
 
 const HUNTSVILLE = [34.7304, -86.5861];
-const DEFAULT_SEARCH = { label: "Huntsville, AL", center: HUNTSVILLE, state: "AL", radius: 50 };
 
 const SOURCES = {
   wmaHub: "https://www.outdooralabama.com/hunting/wildlife-management-areas",

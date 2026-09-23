@@ -53,11 +53,12 @@ No modules. Every top-level `const` and `function` lands in the shared global sc
 `<script>` order in `index.html` is a real dependency graph:
 
 ```
-states.js → seasons.js → data.js → live.js → resources.js → calendar.js → almanac.js → calibers.js → script.js
+states.js → seasons.js → data.js → coverage.js → live.js → resources.js → calendar.js → almanac.js → calibers.js → script.js
           → draws-data.js → draws.js
 ```
 
 - `data.js` references `SEASON_SCOPES` from `seasons.js`, so it must come after it.
+- `coverage.js` references `LOCATIONS` and `HUNTSVILLE` from `data.js`, so it must come after it.
 - `almanac.js` sits **before** `script.js`, like `calendar.js` and `resources.js`: it defines
   `renderAlmanac()` / `initAlmanac()` for `refreshAll()` and the start block to call, and runs
   nothing at load. Keep it that way — a top-level call there would hit `escapeHtml`/`appState`
@@ -73,8 +74,9 @@ states.js → seasons.js → data.js → live.js → resources.js → calendar.j
   new search never re-renders (and resets) the slider or compare state.
 - **`draws.js` must stay after `script.js`** — it uses `escapeHtml`, `restoreSplit` and `map`,
   all defined there. Moving it earlier throws a ReferenceError at load.
-- `script.js` ends with top-level `initCalendar(); initAlmanac(); initCalibers(); runSearch(...)`. `draws.js` ends with
-  `initDraws()`. There is no single entry point.
+- `script.js` ends with top-level `initCalendar(); initAlmanac(); initCalibers();`, then `runSearch(...)` if the URL
+  carries a search, else `refreshAll()`. With no search, `appState.search` is `null` and every renderer shows a
+  "search a location" empty state. `draws.js` ends with `initDraws()`. There is no single entry point.
 
 ### File roles
 
@@ -84,6 +86,7 @@ states.js → seasons.js → data.js → live.js → resources.js → calendar.j
 | `live.js` | All network I/O (PAD-US, TIGERweb, Photon/Nominatim, Overpass, NWS weather) + geometry math |
 | `data.js` | Hand-written curated Huntsville places (`LOCATIONS`) |
 | `seasons.js` | Alabama season dates, `GAME`, and the shared date helpers (`parseDay`, `TODAY`, `daysBetween`, `formatDay`) |
+| `coverage.js` | `DETAIL_AREAS`, `STATE_LAYERS` (official state agency GIS layers, e.g. Montana FWP) and `coverageLevel()` |
 | `calendar.js` | Season calendar tab; reads `appState` |
 | `resources.js` | Licenses & gear tab; reads `appState` |
 | `states.js` | Per-state agency links |
@@ -174,6 +177,12 @@ the *shape* of the data, not a trustworthy source of its *content*:
   Public Domain"; `BG_PHOTOS` in `calibers.js` records each page, credit and the retrieval date, and
   the tab prints the credits. Many FWS.gov photos are instead "Copyrighted … Used by Permission" —
   check the rights field on the page before adding or swapping one.
+
+`STATE_LAYERS` in `coverage.js` is the exception: it is queried live from official state agency
+ArcGIS services (Montana FWP so far), and a place is marked huntable only from the agency's own
+hunting field. Records the agency marks as no-hunting or closed are fetched but hidden, and still
+remove their same-named PAD-US twin in `mergeStateLands()`. Each place keeps its exact request
+URLs and retrieval time in `place.provenance`.
 
 A key distinction the data model must preserve: PAD-US is authoritative for who manages a parcel
 and whether the public may enter, but it explicitly **does not** say whether hunting or fishing is

@@ -135,6 +135,12 @@ function agencyCards(abbrs) {
 // Rendered into the "Licenses & Gear" tab whenever the search, area states or shops change.
 function renderResources() {
   const { search, areaStates, shops, loading, errors } = appState;
+  if (!search) {
+    document.getElementById("license-intro").textContent = "Search a location to see the licensing agency for that state.";
+    document.getElementById("license-list").innerHTML = FEDERAL_RESOURCES.map(resourceCard).join("");
+    document.getElementById("gear-list").innerHTML = `<p class="notice">Search a location to find gun, hunting and tackle shops nearby.</p>`;
+    return;
+  }
   const abbrs = areaStates.length ? areaStates : [search.state].filter(Boolean);
   const inAlabama = abbrs.includes("AL");
   const nearHuntsville = milesBetween(search.center, HUNTSVILLE) <= search.radius;

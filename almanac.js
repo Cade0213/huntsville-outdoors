@@ -436,7 +436,7 @@ function almanacShell() {
 
 // ---------- Day-dependent parts ----------
 function renderAlmanacDay() {
-  if (!$a("alm-day")) return;
+  if (!$a("alm-day") || !appState.search) return;
   const { search } = appState;
   const offset = almanacUi.offset;
   const day = almanacDay(offset);
@@ -718,6 +718,10 @@ function resourcesSection() {
 // Fills only the location- and weather-dependent containers; see the header comment for callers.
 function renderAlmanac() {
   if (!$a("alm-day")) return;
+  // Everything here is location-based, so with no search yet the whole shell waits behind a prompt.
+  $a("almanac-body").hidden = !appState.search;
+  $a("almanac-empty").hidden = !!appState.search;
+  if (!appState.search) return;
   ensureWeather(appState.search.center);
   $a("alm-weather").innerHTML = weatherSection();
   $a("alm-official").innerHTML = resourcesSection();
