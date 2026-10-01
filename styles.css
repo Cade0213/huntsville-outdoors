@@ -1875,3 +1875,228 @@ body.on-draws .search { display: none; }
 @keyframes plw-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes plw-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @keyframes plw-pop { 0% { transform: scale(0.8); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+/* ---------- Archery ---------- */
+/* Built from the Big Game blocks (.bg-focus, .bg-section, .bg-chip, .bg-sort, .bg-range, .bg-rate).
+   Only archery-specific pieces are ar-*, so nothing collides with the panel tabs or calendar.js. */
+.ar-species { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.ar-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ar-stats small { font-weight: 600; font-size: 0.7rem; opacity: 0.7; }
+.ar-dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: #fff; }
+.ar-dot.good { background: #3fd13f; }
+.ar-dot.marginal { background: #fab219; }
+.ar-dot.short { background: #ff6a5f; }
+.ar-grid { align-items: stretch; }
+.ar-grid > .bg-section { min-width: 0; }
+
+/* Paper-card sliders: the .bg-range track is white-on-dark, so recolour it for light backgrounds. */
+.ar-paper { color: var(--forest-dark); }
+.ar-paper .bg-range-label { font-size: 0.72rem; color: var(--muted); }
+.ar-paper .bg-range-label output { font-size: 1.15rem; color: var(--forest-dark); }
+.ar-paper input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--hunting) var(--pct), var(--line-soft) var(--pct)); }
+.ar-paper input[type="range"]::-moz-range-track { background: var(--line-soft); }
+#archery-view .bg-section .bg-chip.is-on { background: var(--forest); border-color: var(--forest); color: #fff; }
+
+/* Anatomy scene */
+.ar-scene { display: block; width: 100%; height: auto; margin-top: 4px; border-radius: 12px; background: linear-gradient(180deg, #f3efe2, #ebe5d2); }
+.ar-scene-t { font-size: 12px; font-weight: 700; fill: var(--muted); }
+.ar-ground { stroke: #d4cbb3; stroke-width: 1.5; }
+.ar-shadow { fill: rgba(60, 50, 30, 0.14); }
+.ar-far { filter: brightness(0.72); }
+.ar-near path { stroke: rgba(255, 255, 255, 0.16); stroke-width: 0.5; }
+.ar-tail { fill: none; stroke-width: 1.2; stroke-linecap: round; }
+.ar-antler path { fill: none; stroke: #dccbab; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.ar-antler path.fill { fill: #dccbab; stroke-width: 0.6; }
+.ar-antler.dark path { stroke: #221d19; }
+.ar-vitals .lungs { fill: #f0a7a2; opacity: 0.92; }
+.ar-vitals .heart { fill: #b8261e; }
+.ar-vitals .liver { fill: #7a3131; opacity: 0.85; }
+.ar-vitals .scap { fill: rgba(255, 255, 255, 0.1); stroke: #fff; stroke-width: 0.7; stroke-dasharray: 2 1.6; opacity: 0.8; }
+.ar-aim .ring { fill: rgba(192, 98, 31, 0.12); stroke: var(--hunting); }
+.ar-aim .dot { fill: var(--hunting); }
+.ar-key i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; }
+.ar-key .k-lungs { background: #f0a7a2; }
+.ar-key .k-heart { background: #b8261e; }
+.ar-key .k-liver { background: #7a3131; }
+.ar-key .k-scap { border: 1.5px dashed var(--muted); }
+.ar-key .k-aim { border: 2px solid var(--hunting); background: rgba(192, 98, 31, 0.15); }
+
+.ar-path { display: flex; gap: 14px; align-items: center; margin-top: 12px; padding: 10px; border-radius: 12px; background: var(--sand); }
+.ar-path .mini-head { margin: 0 0 4px; }
+.ar-inset { flex: none; width: 170px; height: auto; }
+/* SVG elements ignore the hidden attribute in Chrome, so honour it explicitly. */
+#archery-view svg [hidden] { display: none; }
+.ar-inset-t { font-size: 8px; font-weight: 700; fill: var(--muted); }
+.ar-inset .t-body { fill: #b99f82; }
+.ar-inset .t-vital { fill: #f0a7a2; }
+.ar-inset .t-bone { fill: #f7f3ea; stroke: #7c6a55; stroke-width: 0.8; }
+.ar-inset .t-bone.far { opacity: 0.55; }
+.ar-arrow { stroke: var(--hunting); stroke-width: 2; stroke-linecap: round; }
+.ar-path-text { margin: 0; font-size: 0.84rem; line-height: 1.5; }
+
+/* Sight picture */
+.ar-sight-card { display: flex; flex-direction: column; }
+.ar-scope-wrap { position: relative; max-width: 440px; width: 100%; margin: 4px auto 0; }
+.ar-scope { display: block; width: 100%; height: auto; border-radius: 16px; background: var(--forest-dark); }
+.ar-scope.is-drag { touch-action: none; cursor: grab; }
+.ar-scope.is-drag:active { cursor: grabbing; }
+.ar-scope:focus-visible { outline: 3px solid var(--warn-border); outline-offset: 2px; }
+.ar-scope-bg { fill: var(--forest-dark); }
+.ar-grass { fill: #8c9a66; }
+.ar-peep { fill: none; stroke: #0d140f; stroke-width: 2.5; }
+.ar-zone { fill: none; stroke: var(--hunting); stroke-dasharray: 3 2; }
+.ar-housing .ring { fill: none; stroke: #111; stroke-width: 3; }
+.ar-housing .ring2 { fill: none; stroke: rgba(255, 255, 255, 0.35); stroke-width: 0.35; }
+.ar-pin line { stroke: #1c1c1c; stroke-width: 0.9; }
+.ar-pin text { font-size: 3.4px; font-weight: 800; fill: #fff; paint-order: stroke; stroke: rgba(0, 0, 0, 0.6); stroke-width: 0.8; }
+.ar-pin circle { stroke: rgba(0, 0, 0, 0.55); stroke-width: 0.3; }
+.ar-pin.on circle { filter: drop-shadow(0 0 1.2px #fff); }
+.ar-hold { fill: none; stroke: var(--hunting); stroke-width: 0.6; stroke-dasharray: 1 0.7; }
+.ar-level rect { fill: rgba(15, 20, 15, 0.8); }
+.ar-level circle { fill: #9be27e; }
+.ar-impact circle { fill: #fff; stroke: #b8261e; stroke-width: 0.7; }
+.ar-impact .halo { fill: none; stroke: #fff; stroke-width: 0.5; opacity: 0.8; }
+.ar-scope-hud {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: rgba(15, 25, 18, 0.72);
+  color: #fff;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  pointer-events: none;
+}
+.ar-scope-hud strong { font-size: 0.86rem; color: #ffcfa8; }
+.ar-scope-hud small { opacity: 0.75; }
+.ar-scope-tools[hidden] { display: none; }
+.ar-scope-tools { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; }
+.ar-scope-tools .bg-chip { flex: none; }
+.ar-scope-tools .bg-chip[aria-pressed="true"] { background: var(--forest); border-color: var(--forest); color: #fff; }
+.ar-scope-note { margin: 2px 0 0; font-size: 0.82rem; line-height: 1.45; color: var(--muted); }
+.ar-drill { margin-top: 10px; }
+.ar-drill-q { margin: 0 0 8px; font-size: 0.86rem; line-height: 1.45; }
+.ar-drill-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ar-drill-btns .btn-primary.small { min-height: 34px; font-size: 0.85rem; padding: 0 14px; }
+.ar-score { margin-left: auto; font-size: 0.78rem; font-weight: 700; color: var(--muted); }
+.ar-drill-result { margin: 10px 0 0; font-size: 0.86rem; line-height: 1.45; border-radius: 10px; }
+.ar-drill-result:not(:empty) { padding: 8px 10px; }
+.ar-drill-result.good { background: #e2f3e2; color: #0a5f0a; }
+.ar-drill-result.short { background: #fbe2e2; color: #9b2222; }
+.ar-drill-result.marginal { background: #fff0cc; color: #6f4b00; }
+
+/* Broadheads */
+.ar-setup { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; }
+.ar-setups .bg-chip { font-size: 0.74rem; }
+.ar-ke { margin-top: 14px; }
+.ar-ke-head { font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
+.ar-ke-head strong { font-size: 1.05rem; color: var(--forest-dark); }
+.ar-ke-bar { position: relative; height: 12px; margin-top: 8px; border-radius: 999px; overflow: visible; background: var(--line-soft); }
+.ar-ke-bar span { position: absolute; top: 0; bottom: 0; }
+.ar-ke-bar .t0 { background: #ece6d6; border-radius: 999px 0 0 999px; }
+.ar-ke-bar .t1 { background: #dbe7d2; }
+.ar-ke-bar .t2 { background: #c2d6b5; }
+.ar-ke-bar .t3 { background: #a9c49a; border-radius: 0 999px 999px 0; }
+.ar-ke-bar b { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); }
+.ar-ke-bar i {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--hunting);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.ar-ke-labels { position: relative; height: 16px; margin-top: 4px; font-size: 0.64rem; color: var(--muted); }
+.ar-ke-labels span { position: absolute; white-space: nowrap; }
+.ar-ke-labels span:first-child { display: none; }
+
+.ar-heads { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.ar-head {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-areas: "icon name rate" "icon why why";
+  gap: 2px 10px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ar-head:hover { border-color: var(--moss); }
+.ar-head[aria-pressed="true"] { border-color: var(--forest); background: #eaf3e4; box-shadow: inset 0 0 0 1px var(--forest); }
+.ar-head:focus-visible { outline: 3px solid var(--warn-border); outline-offset: 2px; }
+.ar-head-icon { grid-area: icon; width: 44px; height: 44px; }
+.ar-head-icon .cut { fill: #f6f2e8; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 2.5; }
+.ar-head-icon line { stroke: var(--forest-dark); stroke-width: 3.2; stroke-linecap: round; }
+.ar-head-icon .ferrule { fill: var(--hunting); }
+.ar-head-name { grid-area: name; min-width: 0; }
+.ar-head-name strong { display: block; font-size: 0.9rem; color: var(--forest-dark); }
+.ar-head-name span { font-size: 0.72rem; color: var(--muted); }
+.ar-head .bg-rate { grid-area: rate; }
+.ar-head-why { grid-area: why; font-size: 0.76rem; line-height: 1.4; color: var(--muted); }
+.ar-head.is-auto .ar-head-name strong::after { content: "auto"; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--forest); color: #fff; font-size: 0.62rem; vertical-align: 2px; }
+
+/* Pins */
+.ar-pins { display: grid; gap: 4px; }
+.ar-pin-row, .ar-pin-axis { display: grid; grid-template-columns: 62px minmax(0, 1fr) 76px; gap: 10px; align-items: center; }
+.ar-pin-row {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ar-pin-row:hover { background: #f6f2e8; }
+.ar-pin-row.is-on { background: #fbf3ea; border-color: #efd3bb; }
+.ar-pin-row:focus-visible { outline: 3px solid var(--warn-border); outline-offset: 1px; }
+.ar-pin-name { display: flex; white-space: nowrap; align-items: center; gap: 7px; font-weight: 800; font-size: 0.86rem; color: var(--forest-dark); }
+.ar-pin-name i { width: 11px; height: 11px; border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45); }
+.ar-pin-track { position: relative; height: 12px; border-radius: 999px; background: var(--line-soft); }
+.ar-pin-win { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: var(--moss); }
+.ar-pin-row.is-on .ar-pin-win { background: var(--hunting); }
+.ar-pin-gap { text-align: right; font-size: 0.84rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ar-pin-gap small { font-weight: 600; color: var(--muted); font-size: 0.68rem; }
+.ar-pin-axis { padding: 0 8px; }
+.ar-pin-ticks { position: relative; height: 16px; font-size: 0.64rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ar-pin-ticks span { position: absolute; transform: translateX(-50%); }
+.ar-pin-track b { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--hunting); }
+.ar-wrong { margin: 12px 0 0; padding: 9px 11px; border-radius: 10px; background: var(--sand); font-size: 0.84rem; line-height: 1.45; }
+
+@media (max-width: 1100px) {
+  .ar-species { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .ar-path { flex-direction: column; align-items: stretch; }
+  .ar-inset { width: 100%; max-width: 220px; margin: 0 auto; }
+  .ar-setup { grid-template-columns: minmax(0, 1fr); }
+  .ar-pin-row, .ar-pin-axis { grid-template-columns: 60px minmax(0, 1fr) 62px; gap: 6px; }
+  /* Too narrow for labels pinned under their tier edges: show them as a wrapped legend instead. */
+  .ar-ke-labels { display: flex; flex-wrap: wrap; gap: 2px 12px; height: auto; font-size: 0.66rem; }
+  .ar-ke-labels span { position: static; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #ar-top-body, #ar-top-arrow { transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  .ar-head { transition: border-color 0.18s, background-color 0.18s, box-shadow 0.18s; }
+  .ar-head:active, .ar-pin-row:active { transform: scale(0.99); }
+  .ar-pin-win, .ar-ke-bar i, .ar-ke-bar b { transition: left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.2s; }
+  .ar-pin-track b { transition: left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  .ar-impact circle { animation: plw-pop 0.35s ease-out; transform-box: fill-box; transform-origin: center; }
+  .ar-drill-result:not(:empty) { animation: plw-rise 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+}

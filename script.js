@@ -624,6 +624,7 @@ function refreshAll() {
   renderResources();
   renderAlmanac();
   renderCalibers();
+  renderArchery();
   if (appState.selectedId && !appState.places.some((p) => p.id === appState.selectedId)) appState.selectedId = null;
   showPanel();
   renderDisclaimerAgency();
@@ -1056,6 +1057,7 @@ restoreSplit();
 initCalendar();
 initAlmanac();
 initCalibers();
+initArchery();
 const initialSearch = readUrl();
 if (initialSearch) runSearch(initialSearch, { updateUrl: false });
 else refreshAll();

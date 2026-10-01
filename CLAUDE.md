@@ -53,7 +53,7 @@ No modules. Every top-level `const` and `function` lands in the shared global sc
 `<script>` order in `index.html` is a real dependency graph:
 
 ```
-states.js → seasons.js → data.js → coverage.js → live.js → resources.js → calendar.js → almanac.js → calibers.js → script.js
+states.js → seasons.js → data.js → coverage.js → live.js → resources.js → calendar.js → almanac.js → calibers.js → archery.js → script.js
           → draws-data.js → draws.js
 ```
 
@@ -72,9 +72,12 @@ states.js → seasons.js → data.js → coverage.js → live.js → resources.j
 - `calibers.js` follows the same rule: `initCalibers()` is called from script.js's start block,
   and `renderCalibers()` from `refreshAll()` only refreshes its official-links section, so a
   new search never re-renders (and resets) the slider or compare state.
+- `archery.js` is the same shape and sits right after `calibers.js`, because it reuses
+  `BG_PHOTOS`, `bgPhoto` and `bgSizeDots` from it. `initArchery()` is called from script.js's start
+  block; `renderArchery()` from `refreshAll()` only refreshes its official-links section.
 - **`draws.js` must stay after `script.js`** — it uses `escapeHtml`, `restoreSplit` and `map`,
   all defined there. Moving it earlier throws a ReferenceError at load.
-- `script.js` ends with top-level `initCalendar(); initAlmanac(); initCalibers();`, then `runSearch(...)` if the URL
+- `script.js` ends with top-level `initCalendar(); initAlmanac(); initCalibers(); initArchery();`, then `runSearch(...)` if the URL
   carries a search, else `refreshAll()`. With no search, `appState.search` is `null` and every renderer shows a
   "search a location" empty state. `draws.js` ends with `initDraws()`. There is no single entry point.
 
@@ -93,6 +96,7 @@ states.js → seasons.js → data.js → coverage.js → live.js → resources.j
 | `draws-data.js` / `draws.js` | Hunting Draws dataset / its UI (tile map, month bars, pinned plan), plus top-level view switching |
 | `almanac.js` | Almanac tab: sun/moon/solunar math, 30-day day planner, general seasonal guidance, NWS weather, official links |
 | `calibers.js` | Big Game & Calibers tab: species picker, distance slider, cartridge energy lineup, compare chart |
+| `archery.js` | Archery tab: shot placement by angle, broadhead fit, pin gaps / sight picture, practice drill |
 
 `appState` in `script.js` is the shared mutable store; `calendar.js`, `resources.js` and
 `almanac.js` read it directly. `refreshAll()` re-renders everything that depends on it.
@@ -100,7 +104,7 @@ states.js → seasons.js → data.js → coverage.js → live.js → resources.j
 ### Two tab systems — do not mix them
 
 - **Top-level views**: `.site-tab` + `.view` with `data-view`, switched by `setView()` in
-  `draws.js`. Map Locator vs Hunting Draws vs Almanac vs Big Game & Calibers. `setView()` is generic over
+  `draws.js`. Map Locator vs Hunting Draws vs Almanac vs Big Game & Calibers vs Archery. `setView()` is generic over
   `.view[data-view]`, so adding a section needs no change there.
 - **Panel tabs inside Map Locator**: `.tab` + `.tab-panel` with `data-tab`, switched by
   `setTab()` in `script.js`.
@@ -172,6 +176,10 @@ the *shape* of the data, not a trustworthy source of its *content*:
   with energy computed from a simplified drag model. Like the Almanac's guidance it carries its own
   fixed disclaimer and makes no legal claims; legal method-of-take rules are linked to the state
   agency, not carried.
+- `archery.js` — hand-written body proportions, vital-zone sizes and aim points drawn from one
+  parametric silhouette, a heuristic broadhead rating, and arrow speed/drop/energy from a simplified
+  drag model. Same standing as `calibers.js`: fixed disclaimer, no legal claims, broadhead and
+  equipment legality linked to the state agency.
 - `images/species/*.jpg` — the Big Game tab's animal photos. Each is a cropped, resized copy of a
   U.S. Fish & Wildlife Service photo whose FWS.gov media page reads "Media Usage Rights/License:
   Public Domain"; `BG_PHOTOS` in `calibers.js` records each page, credit and the retrieval date, and

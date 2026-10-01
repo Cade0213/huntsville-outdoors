@@ -79,6 +79,13 @@
       </svg>
       <span class="lbl-long">Big Game &amp; Calibers</span><span class="lbl-short">Calibers</span>
     </button>
+    <button type="button" role="tab" class="site-tab" data-view="archery" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
+        <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+          d="M6 3.5c7 2 10.5 7.5 14.5 14.5M6 3.5C4.5 10 9 17.5 20.5 18M3.5 20.5 15 9M15 9h-3.5M15 9v3.5"/>
+      </svg>
+      <span>Archery</span>
+    </button>
   </nav>
 
   <div class="app view" id="app" data-view="map">
@@ -338,6 +345,17 @@
     </div>
   </section>
 
+  <!-- ARCHERY -->
+  <!-- Reuses the Big Game shell classes (bg-view / bg-scroll / bg-inner); archery.js owns ar-* ids. -->
+  <section class="view bg-view" id="archery-view" data-view="archery" aria-label="Archery" hidden>
+    <div class="bg-scroll">
+      <div class="bg-inner">
+        <p class="alm-disclaimer" id="archery-disclaimer" role="note"></p>
+        <div id="archery-body"></div>
+      </div>
+    </div>
+  </section>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="states.js"></script>
   <script src="seasons.js"></script>
@@ -348,6 +366,7 @@
   <script src="calendar.js"></script>
   <script src="almanac.js"></script>
   <script src="calibers.js"></script>
+  <script src="archery.js"></script>
   <script src="script.js"></script>
   <script src="draws-data.js"></script>
   <script src="draws.js"></script>
