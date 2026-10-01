@@ -2149,3 +2149,24 @@ body:has(#map-prompt:not([hidden])) .results-head { display: none; }
 body:has(#map-prompt:not([hidden])) .search-box input {
   box-shadow: 0 0 0 3px rgba(216, 184, 120, 0.85), 0 0 18px rgba(216, 184, 120, 0.45);
 }
+
+/* ---------- Map key, on the map ---------- */
+.map-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 34px; /* clears the scale bar */
+  z-index: 600; /* above the "search a location" prompt (500), below Leaflet's controls */
+  margin: 0;
+  padding: 6px 11px;
+  list-style: none;
+  font-size: 0.76rem;
+  line-height: 1.75;
+  color: var(--text);
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: none; /* never blocks panning or clicks on the map beneath it */
+}
+/* Nothing to explain until there are results on the map. */
+body:has(#map-prompt:not([hidden])) .map-legend { display: none; }

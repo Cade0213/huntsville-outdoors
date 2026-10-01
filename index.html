@@ -160,14 +160,6 @@
 
           <div class="results-head">
             <p id="results-summary" aria-live="polite"></p>
-            <details class="map-key">
-              <summary>Map key</summary>
-              <ul>
-                <li><span class="key-pin hunting"></span>Hunting land</li>
-                <li><span class="key-pin fishing"></span>Fishing access</li>
-                <li><span class="key-area"></span>Public land boundary</li>
-              </ul>
-            </details>
           </div>
 
           <p class="coverage-note" id="coverage-note" hidden></p>
@@ -251,6 +243,11 @@
         <span>Enter a U.S. city or town above to find public hunting and fishing land nearby.</span>
         <button type="button" class="btn-primary map-prompt-btn" data-focus-search>Search for a city</button>
       </div>
+      <ul class="map-legend" aria-label="Map key">
+        <li><span class="key-pin hunting"></span>Hunting land</li>
+        <li><span class="key-pin fishing"></span>Fishing access</li>
+        <li><span class="key-area"></span>Public land boundary</li>
+      </ul>
       <button type="button" class="map-toggle" id="map-toggle" aria-pressed="false">Expand map</button>
     </main>
   </div>
