@@ -393,6 +393,7 @@ function renderList() {
         <div class="empty-icon" aria-hidden="true">🗺️</div>
         <h3>Search a location to get started</h3>
         <p>Enter a U.S. city or town above to see public hunting and fishing land nearby.</p>
+        <button type="button" class="btn-primary" data-focus-search>Search for a city</button>
       </div>`;
     $("results-list").innerHTML = "";
     return;
@@ -945,6 +946,14 @@ document.addEventListener("click", (e) => {
     const area = DETAIL_AREAS.find((a) => a.id === sample.dataset.sampleArea);
     if (area) return runSearch({ ...area.sampleSearch });
   }
+});
+
+// "Search for a city" buttons (map prompt and empty list) send you to the real search box.
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("[data-focus-search]")) return;
+  const input = $("city-search");
+  input.scrollIntoView({ block: "center", behavior: "smooth" });
+  input.focus();
 });
 
 // Click on empty map closes the detail view.

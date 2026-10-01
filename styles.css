@@ -2139,3 +2139,13 @@ body.on-draws .search { display: none; }
   pointer-events: none;
   background: linear-gradient(90deg, rgba(20, 38, 26, 0.88) 0%, rgba(20, 38, 26, 0.7) 22%, rgba(20, 38, 26, 0.1) 46%, rgba(20, 38, 26, 0) 100%);
 }
+
+/* ---------- First-visit guidance: make "search a city" the obvious first step ---------- */
+.map-prompt-btn { pointer-events: auto; margin-top: 10px; align-self: center; }
+.empty-state .btn-primary { margin-top: 12px; }
+/* Until a search exists the filters have nothing to filter, so hide them and let the search stand out. */
+body:has(#map-prompt:not([hidden])) .filters,
+body:has(#map-prompt:not([hidden])) .results-head { display: none; }
+body:has(#map-prompt:not([hidden])) .search-box input {
+  box-shadow: 0 0 0 3px rgba(216, 184, 120, 0.85), 0 0 18px rgba(216, 184, 120, 0.45);
+}
