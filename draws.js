@@ -95,7 +95,7 @@ function drawMatches(d, skip) {
   if (skip !== "month" && f.month !== "all" && monthKey(drawDeadline(d)) !== f.month) return false;
   if (f.residency !== "all" && d.residency !== f.residency && d.residency !== "both") return false;
   if (d.cost > f.maxCost) return false;
-  if (q && !`${d.state} ${STATES[d.state]?.name || ""} ${d.species} ${d.hunt} ${d.notes.join(" ")}`.toLowerCase().includes(q)) return false;
+  if (q && !`${d.state} ${STATES[d.state]?.name || ""} ${d.species} ${d.animals || ""} ${d.hunt} ${d.notes.join(" ")}`.toLowerCase().includes(q)) return false;
   return true;
 }
 
@@ -208,7 +208,7 @@ function drawRow(draw) {
         <button type="button" class="dw-row-main" aria-expanded="false" aria-controls="${detailId}">
           <span class="draw-state" aria-hidden="true">${escapeHtml(draw.state)}</span>
           <span class="dw-row-title">
-            <strong>${escapeHtml(draw.species)}<span class="sr-only"> in ${escapeHtml(STATES[draw.state]?.name || draw.state)}</span></strong>
+            <strong>${escapeHtml(draw.animals || draw.species)}<span class="sr-only"> in ${escapeHtml(STATES[draw.state]?.name || draw.state)}</span></strong>
             <span>${escapeHtml(draw.hunt)} · ${drawDate(drawDeadline(draw), false)}</span>
           </span>
           ${drawRing(draw)}
@@ -329,7 +329,7 @@ function applyDraws() {
           ? `<span class="dw-count-n soon">Closes today</span>`
           : `<span class="dw-count-n ${kind}">${days}</span><span class="dw-count-u">day${days === 1 ? "" : "s"} left</span>`}
       </div>
-      <h2>${escapeHtml(STATES[next.state]?.name || next.state)} ${escapeHtml(next.species)}</h2>
+      <h2>${escapeHtml(STATES[next.state]?.name || next.state)} ${escapeHtml(next.animals || next.species)}</h2>
       <p>${escapeHtml(next.hunt)} · closes ${drawDate(drawDeadline(next))} · ${next.odds ? `${oddsText(next)} odds` : "odds vary"}</p>
       <div class="dw-next-actions">
         <button type="button" class="bg-chip dw-next-pin" data-pin="${escapeHtml(next.id)}" aria-pressed="${pinned}">${pinned ? "★ Pinned" : "☆ Pin to plan"}</button>
