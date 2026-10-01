@@ -952,6 +952,24 @@ map.on("click", () => {
   if (appState.selectedId) clearSelection();
 });
 
+// Right-click (long-press on touch) anywhere on the map offers to open that spot in Google Maps.
+map.on("contextmenu", (e) => {
+  const lat = e.latlng.lat.toFixed(5);
+  const lng = e.latlng.lng.toFixed(5);
+  const box = document.createElement("div");
+  const link = document.createElement("a");
+  link.href = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "Open in Google Maps";
+  link.style.fontWeight = "700";
+  const coords = document.createElement("div");
+  coords.textContent = `${lat}, ${lng}`;
+  coords.style.cssText = "font-size:0.8rem;opacity:0.75;margin-top:2px";
+  box.append(link, coords);
+  L.popup({ closeButton: false }).setLatLng(e.latlng).setContent(box).openOn(map);
+});
+
 // Phone layout: let the map take most of the screen.
 $("map-toggle").addEventListener("click", () => {
   const expanded = $("app").classList.toggle("map-expanded");
