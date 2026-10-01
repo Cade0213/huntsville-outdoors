@@ -761,6 +761,41 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
     });
 }
 
+// Wipes the current search and everything it loaded, returning to the first-visit state.
+function clearSearch() {
+  searchToken++; // any request still in flight is now stale and its results are ignored
+  searchAbort?.abort();
+  Object.assign(appState, {
+    search: null,
+    places: [],
+    shops: [],
+    areaStates: [],
+    areaStatePolys: [],
+    loading: { lands: false, osm: false, states: false, stateLands: false },
+    errors: {},
+    selectedId: null,
+    filterText: "",
+  });
+  $("city-search").value = "";
+  $("list-filter").value = "";
+  closeSuggestions();
+  map.closePopup();
+  searchLayer.clearLayers();
+  $("map-prompt").hidden = false;
+  map.fitBounds(US_BOUNDS);
+  try {
+    const params = new URLSearchParams(location.search);
+    ["q", "lat", "lng", "st", "r"].forEach((k) => params.delete(k));
+    const rest = params.toString();
+    history.replaceState(null, "", location.pathname + (rest ? `?${rest}` : ""));
+  } catch {
+    // history can be blocked on file:// pages; the app works without it.
+  }
+  refreshAll();
+  $("city-search").focus();
+}
+$("search-clear").addEventListener("click", clearSearch);
+
 function retrySearch() {
   runSearch(appState.search, { fit: false, updateUrl: false });
 }
