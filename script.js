@@ -966,11 +966,53 @@ map.on("click", () => {
   if (appState.selectedId) clearSelection();
 });
 
-// Right-click (long-press on touch) anywhere on the map offers to open that spot in Google Maps.
+// Re-centre the search on a map point, keeping the current radius. The state comes from the Census
+// boundaries (what the rest of the app keys agencies and seasons on) and the name from a reverse
+// lookup; either may fail on its own, and the point is only refused when no U.S. state contains it.
+async function searchAtPoint(latlng) {
+  const center = [+latlng.lat.toFixed(5), +latlng.lng.toFixed(5)];
+  const radius = appState.search ? appState.search.radius : +$("radius-select").value;
+  const reverse = fetchJson(
+    `https://nominatim.openstreetmap.org/reverse?${queryString({ lat: center[0], lon: center[1], format: "jsonv2", zoom: 10, addressdetails: 1 })}`,
+    { timeoutMs: 8000 }
+  );
+  const [states, place] = await Promise.allSettled([fetchStatesInArea(center, 1), reverse]);
+  const addr = place.status === "fulfilled" ? place.value.address || {} : {};
+  const state =
+    (states.status === "fulfilled" && stateForPoint(center, states.value, null)) || (addr.country_code === "us" ? stateAbbr(addr.state) : null);
+  if (!state || !STATES[state]) return null;
+  const name = addr.city || addr.town || addr.village || addr.hamlet || addr.county;
+  const label = name ? `${name}, ${state}` : `${center[0].toFixed(3)}, ${center[1].toFixed(3)} (${state})`;
+  return { label, center, state, radius };
+}
+
+// Right-click (long-press on touch) on the map: search around that spot, or open it in Google Maps.
 map.on("contextmenu", (e) => {
   const lat = e.latlng.lat.toFixed(5);
   const lng = e.latlng.lng.toFixed(5);
   const box = document.createElement("div");
+  box.style.cssText = "display:grid;gap:6px;min-width:150px";
+
+  const here = document.createElement("button");
+  here.type = "button";
+  here.className = "btn-primary small";
+  here.textContent = "Search this location";
+  const note = document.createElement("div");
+  note.style.cssText = "font-size:0.78rem;color:#9a3412;min-height:0";
+  here.addEventListener("click", async () => {
+    here.disabled = true;
+    here.textContent = "Searching…";
+    const search = await searchAtPoint(e.latlng).catch(() => null);
+    if (!search) {
+      here.disabled = false;
+      here.textContent = "Search this location";
+      note.textContent = "Couldn't place that spot in a U.S. state. Try a spot on land in the U.S.";
+      return;
+    }
+    map.closePopup();
+    runSearch(search);
+  });
+
   const link = document.createElement("a");
   link.href = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
   link.target = "_blank";
@@ -979,8 +1021,8 @@ map.on("contextmenu", (e) => {
   link.style.fontWeight = "700";
   const coords = document.createElement("div");
   coords.textContent = `${lat}, ${lng}`;
-  coords.style.cssText = "font-size:0.8rem;opacity:0.75;margin-top:2px";
-  box.append(link, coords);
+  coords.style.cssText = "font-size:0.8rem;opacity:0.75";
+  box.append(here, link, coords, note);
   L.popup({ closeButton: false }).setLatLng(e.latlng).setContent(box).openOn(map);
 });
 
