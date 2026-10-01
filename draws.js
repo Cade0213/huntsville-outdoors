@@ -13,7 +13,8 @@ const SOON_DAYS_DRAW = 30; // "closing soon" window, mirrors SOON_DAYS in the se
 const DRAW_RING_DAYS = 120; // a countdown ring is full at this many days out
 
 const drawFilters = { state: "all", species: "all", month: "all", residency: "all", text: "", maxCost: 4, sort: "deadline" };
-const drawUi = { pinned: [], heroId: undefined }; // pinned: draw ids in pin order; heroId: draw the hero shows
+const DRAW_PAGE_SIZE = 12; // cards per page; the list is paginated so a long dataset doesn't make one giant page
+const drawUi = { pinned: [], heroId: undefined, page: 0, pageKey: "" }; // pinned: draw ids in pin order; heroId: draw the hero shows
 const DRAW_PIN_KEY = "plw.drawPins";
 
 const $d = (id) => document.getElementById(id);
@@ -270,7 +271,13 @@ function buildDraws() {
 function applyDraws() {
   const f = drawFilters;
   const list = visibleDraws();
-  const ids = new Set(list.map((d) => d.id));
+  // Pagination: a filter or sort change returns to page 1; pinning a draw (which also lands here) keeps the page.
+  const pageKey = JSON.stringify(f);
+  if (pageKey !== drawUi.pageKey) { drawUi.pageKey = pageKey; drawUi.page = 0; }
+  const pages = Math.max(1, Math.ceil(list.length / DRAW_PAGE_SIZE));
+  drawUi.page = Math.min(drawUi.page, pages - 1);
+  const pageStart = drawUi.page * DRAW_PAGE_SIZE;
+  const ids = new Set(list.slice(pageStart, pageStart + DRAW_PAGE_SIZE).map((d) => d.id));
   const open = list.filter((d) => drawStatus(d).kind !== "closed");
   const next = open[0];
 
@@ -300,6 +307,12 @@ function applyDraws() {
     }
   }
   $d("dw-none").hidden = list.length > 0;
+
+  // Pager.
+  $d("dw-pager").hidden = pages <= 1;
+  $d("dw-prev").disabled = drawUi.page === 0;
+  $d("dw-next-page").disabled = drawUi.page >= pages - 1;
+  $d("dw-page-label").textContent = `Page ${drawUi.page + 1} of ${pages} · ${pageStart + 1}–${Math.min(list.length, pageStart + DRAW_PAGE_SIZE)} of ${list.length}`;
 
   // Summary line.
   const hiddenVaries = f.sort === "odds" ? list.filter((d) => !d.odds).length : 0;
@@ -512,6 +525,14 @@ function initDraws() {
       return;
     }
     const opener = e.target.closest("[data-open]");
+    if (opener) {
+      // The draw may sit on another page; jump there first so its row is visible.
+      const at = visibleDraws().findIndex((d) => d.id === opener.dataset.open);
+      if (at >= 0 && Math.floor(at / DRAW_PAGE_SIZE) !== drawUi.page) {
+        drawUi.page = Math.floor(at / DRAW_PAGE_SIZE);
+        applyDraws();
+      }
+    }
     const main = e.target.closest(".dw-row-main");
     const row = opener
       ? $d("draw-list").querySelector(`.dw-row[data-id="${CSS.escape(opener.dataset.open)}"]`)
@@ -529,6 +550,16 @@ function initDraws() {
       scroller.scrollTo({ top, behavior: window.matchMedia("(prefers-reduced-motion: no-preference)").matches ? "smooth" : "auto" });
       btn.focus({ preventScroll: true });
     }
+  });
+
+  $d("dw-pager").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b || b.disabled) return;
+    drawUi.page += b.id === "dw-prev" ? -1 : 1;
+    applyDraws();
+    const scroller = $d("draws-view").querySelector(".draws-scroll");
+    const top = $d("draw-list").getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 90;
+    scroller.scrollTo({ top, behavior: window.matchMedia("(prefers-reduced-motion: no-preference)").matches ? "smooth" : "auto" });
   });
 
   $d("draw-reset").addEventListener("click", () => {

@@ -956,6 +956,10 @@ body.on-draws .search { display: none; }
 
 /* Draw rows */
 .dw-list { display: grid; gap: 8px; }
+.dw-pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.dw-pager[hidden] { display: none; }
+.dw-pager button:disabled { opacity: 0.45; cursor: default; }
+@media (max-width: 520px) { .dw-pager { flex-wrap: wrap; justify-content: center; } }
 .dw-row { border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .dw-row.is-closed { opacity: 0.62; }
 .dw-row.is-pinned { border-color: #e2b48f; box-shadow: inset 3px 0 0 var(--hunting); }
