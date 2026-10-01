@@ -343,6 +343,9 @@ function renderMapLayers() {
   // Shapes first so dots draw on top of them on the shared canvas.
   for (const place of places) {
     if (!place.polygons) continue;
+    // A rough hand-drawn outline must never stand in for a real boundary. Places that have an
+    // official PAD-US twin show only their dot until the real polygon arrives (or if it never does).
+    if (place.placeholderBoundary && place.padusName) continue;
     const shape = bind(shapeFor(place, place.id === appState.selectedId), place);
     placesLayer.addLayer(shape);
     layerById.set(place.id, { shape });
@@ -550,7 +553,9 @@ function renderDetail(place) {
     <p class="detail-desc">${escapeHtml(place.description)}</p>
     <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
     ${!isConfirmed(place) ? `<div class="notice warn"><strong>Not confirmed open to hunting or fishing.</strong> ${escapeHtml(landNote(place))}</div>` : ""}
-    ${place.placeholderBoundary ? `<p class="notice">The dashed shape is a rough placeholder, not the official boundary. Search again to load the real boundary.</p>` : ""}
+    ${place.placeholderBoundary && place.padusName
+      ? `<p class="notice">${appState.loading.lands ? "Loading the official boundary…" : "The official boundary couldn't be loaded, so no outline is drawn. Search again to retry."}</p>`
+      : place.placeholderBoundary ? `<p class="notice">The dashed shape is a rough placeholder, not the official boundary. Search again to load the real boundary.</p>` : ""}
     ${seasonsBlock(place)}
     <div class="detail-actions">${actions.join("")}</div>
     <div class="popup-warning"><strong>Not official.</strong> ${escapeHtml(disclaimerText(place.state || search.state))}</div>
