@@ -2129,7 +2129,7 @@ body.on-draws .search { display: none; }
 }
 .brand-text p { font-style: italic; opacity: 0.85; }
 @media (max-width: 860px) {
-  .brand-badge { width: 30px; height: 35px; }
+  .brand-badge { width: 38px; height: 38px; }
 }
 /* Soft shade over the scenery behind the title so the snowy peaks never fight the text. */
 .topbar::after {
@@ -2194,3 +2194,6 @@ body:has(#map-prompt:not([hidden])) .map-legend { display: none; }
 .search-clear svg { width: 16px; height: 16px; }
 /* Only offered when there is something to clear. */
 .search-box:has(input:placeholder-shown) .search-clear { display: none; }
+
+/* The crest is its own shape; no tile behind it. */
+.brand-mark { width: auto; height: auto; background: none; border-radius: 0; }
