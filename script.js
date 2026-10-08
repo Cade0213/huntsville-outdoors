@@ -218,10 +218,15 @@ function mergeStateLands(places, stateLands, center) {
   const padusByName = new Map(places.filter((p) => p.source === "padus").map((p) => [normalizeName(p.name), p]));
   const drop = new Set();
   const shown = [];
+  // A hand-checked place already covers its refuge/WMA (matched by padusName); don't list it twice.
+  const curatedNames = new Set(places.filter((p) => p.source === "curated" && p.padusName).map((p) => normalizeName(p.padusName)));
   for (const s of stateLands) {
+    if (curatedNames.has(normalizeName(s.name))) continue;
     const twin = padusByName.get(normalizeName(s.name));
     if (twin) {
       drop.add(twin.id);
+    }
+    if (twin && !s.ownBoundary) {
       s.polygons = twin.polygons;
       s.kind = "zone";
       s.point = twin.point;

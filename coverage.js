@@ -172,6 +172,46 @@ const STATE_LAYERS = {
   },
 };
 
+// ---------- Official federal agency layers ----------
+// Same shape as a STATE_LAYERS entry, but queried for every search regardless of state. Federal
+// polygons are authoritative boundaries, so `ownBoundary` keeps them instead of borrowing the PAD-US
+// twin's outline (the twin is still dropped).
+const FWS = "U.S. Fish & Wildlife Service";
+const FWS_HUNT_UNITS = "https://services.arcgis.com/QVENGdaPbd4LUkLV/arcgis/rest/services/FWS_NWRS_HQ_PublicHuntUnits_view/FeatureServer/0";
+
+const FEDERAL_LAYERS = {
+  agency: FWS,
+  layers: [
+    {
+      id: "fws-hunt",
+      name: "National Hunt Units (50 CFR Part 32)",
+      url: FWS_HUNT_UNITS,
+      outFields: "Organization_Name,Organization_Type,Hunt_Unit_Name,Huntable,Station_Website,Hunting_Website,State",
+      geometry: "polygon",
+      ownBoundary: true,
+      // Units the Service marks Huntable "No" are kept apart from huntable ones, so a refuge with
+      // both gets a shown place (huntable units only) and a hidden one that still removes the PAD-US twin.
+      groupBy: (a) => `${cleanText(a.Organization_Name)}|${a.Huntable && a.Huntable !== "No" ? "hunt" : "no"}`,
+      toPlace: (a) => {
+        const hunting = !!a.Huntable && a.Huntable !== "No";
+        const isRefuge = a.Organization_Type === "NWR";
+        const link = (url) => (url && url.trim().startsWith("http") ? url.trim() : null);
+        return {
+          name: cleanText(a.Organization_Name),
+          typeLabel: isRefuge ? "National Wildlife Refuge" : "Fish & Wildlife Service land",
+          // The hunt-unit layer says nothing about fishing, so we don't either.
+          activities: hunting ? ["hunting"] : [],
+          hidden: !hunting,
+          state: a.State || undefined,
+          description: `Managed by the ${FWS}. The Service lists the hunt units shown here as open to hunting under its station-specific regulations (50 CFR Part 32).`,
+          pageLink: link(a.Hunting_Website) ? ["Refuge hunting page", link(a.Hunting_Website)] : link(a.Station_Website) ? ["Refuge page", link(a.Station_Website)] : null,
+          facts: [a.Huntable === "Special Regulations Apply" && ["Hunting", "Special regulations apply"]],
+        };
+      },
+    },
+  ],
+};
+
 function stateLayersFor(stateAbbrev) {
   return STATE_LAYERS[stateAbbrev] || null;
 }

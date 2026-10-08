@@ -376,7 +376,34 @@ body.on-draws .search { display: none; }
 }
 .game-wrap select { height: 38px; font-size: 0.85rem; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--muted); cursor: pointer; }
-.check input { width: 16px; height: 16px; accent-color: var(--forest); }
+.check input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--line);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.check input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+.check input:checked { background: var(--forest); }
+.check input:checked::after { transform: translateX(14px); }
+.check input:focus-visible { outline: 2px solid var(--forest); outline-offset: 2px; }
 
 .results-head {
   display: flex;

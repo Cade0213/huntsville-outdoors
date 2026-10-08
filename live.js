@@ -526,7 +526,8 @@ async function fetchStateLayer(stateAbbrev, agency, layer, center, radiusMi, sig
       ...p,
       id: `${layer.id}-${normalizeName(key).replace(/ /g, "-")}`,
       source: "state",
-      state: stateAbbrev,
+      state: p.state || stateAbbrev,
+      ownBoundary: !!layer.ownBoundary,
       manager: p.manager || agency,
       kind: polygons ? "zone" : "point",
       polygons,
@@ -546,6 +547,8 @@ async function fetchStateLands(stateAbbrevs, center, radiusMi, signal) {
     const cfg = stateLayersFor(abbr);
     return cfg ? cfg.layers.map((layer) => fetchStateLayer(abbr, cfg.agency, layer, center, radiusMi, signal)) : [];
   });
+  // Federal layers apply to every search, whatever states it touches.
+  jobs.push(...FEDERAL_LAYERS.layers.map((layer) => fetchStateLayer(stateAbbrevs[0], FEDERAL_LAYERS.agency, layer, center, radiusMi, signal)));
   return (await Promise.all(jobs)).flat();
 }
 
