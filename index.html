@@ -9,16 +9,6 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="disclaimer" role="note" id="disclaimer">
-    <p class="disclaimer-text">
-      <strong>⚠️ Unofficial source.</strong>
-      This is not an official source. Always verify current seasons, permits, regulations, and access with the
-      <a id="disclaimer-agency" target="_blank" rel="noopener">state wildlife agency</a>
-      and the managing agency. Regulations change.
-    </p>
-    <button type="button" class="disclaimer-toggle" id="disclaimer-toggle" aria-expanded="false">More</button>
-  </div>
-
   <header class="topbar">
     <svg class="topbar-scene" viewBox="0 0 2400 100" preserveAspectRatio="xMidYMax slice" aria-hidden="true" focusable="false">
     <defs>
@@ -121,6 +111,7 @@
   </header>
 
   <!-- Top-level sections. Distinct classes from the panel's own .tab strip inside Map Locator. -->
+  <div class="site-bar">
   <nav class="site-tabs" role="tablist" aria-label="Sections">
     <button type="button" role="tab" class="site-tab" data-view="map" aria-selected="true" tabindex="0">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
@@ -158,6 +149,16 @@
       <span>Archery</span>
     </button>
   </nav>
+  <div class="disclaimer" role="note" id="disclaimer">
+    <p class="disclaimer-text">
+      <strong>⚠️ Unofficial source.</strong>
+      This is not an official source. Always verify current seasons, permits, regulations, and access with the
+      <a id="disclaimer-agency" target="_blank" rel="noopener">state wildlife agency</a>
+      and the managing agency. Regulations change.
+    </p>
+    <button type="button" class="disclaimer-toggle" id="disclaimer-toggle" aria-expanded="false">More</button>
+  </div>
+  </div>
 
   <div class="app view" id="app" data-view="map">
     <!-- Side panel: tabs for places / seasons / licenses. On phones it sits under the map. -->
@@ -184,10 +185,25 @@
                 <select id="map-game" class="game-select" aria-label="Game season"></select>
               </label>
             </div>
-            <label class="check">
-              <input type="checkbox" role="switch" id="show-unconfirmed" checked />
-              <span>Include unconfirmed public lands</span>
-            </label>
+            <div class="check-row">
+              <label class="check">
+                <input type="checkbox" role="switch" id="show-unconfirmed" checked />
+                <span>Include unconfirmed public lands</span>
+              </label>
+              <button type="button" class="info-tip" id="unconfirmed-info" aria-label="What are unconfirmed public lands?" aria-describedby="unconfirmed-tip" aria-expanded="false">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+                  <circle cx="12" cy="7.8" r="1.25" fill="currentColor"/>
+                  <path d="M12 11v6.2" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+                </svg>
+              </button>
+              <span class="info-tip-text" role="tooltip" id="unconfirmed-tip">
+                <strong>Unconfirmed</strong> places come from USGS PAD-US (public land boundaries) and OpenStreetMap
+                (mapped fishing spots). Those sources show that land is public or that a spot exists, but not whether
+                hunting or fishing is allowed there. Verify with the managing agency before you go. Switch this off to
+                see only places backed by a hand-checked or state agency record.
+              </span>
+            </div>
           </div>
 
           <div class="results-head">

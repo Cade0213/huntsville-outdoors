@@ -956,6 +956,19 @@ $("show-unconfirmed").addEventListener("change", (e) => {
   renderList();
 });
 
+// The "unconfirmed" explainer shows on hover and keyboard focus through CSS; the click toggle is
+// for touch screens, where neither exists.
+$("unconfirmed-info").addEventListener("click", (e) => {
+  const btn = e.currentTarget;
+  btn.setAttribute("aria-expanded", String(btn.getAttribute("aria-expanded") !== "true"));
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#unconfirmed-info")) $("unconfirmed-info").setAttribute("aria-expanded", "false");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") $("unconfirmed-info").setAttribute("aria-expanded", "false");
+});
+
 document.querySelectorAll(".game-select").forEach((sel) => {
   sel.innerHTML =
     `<option value="all">All game seasons</option>` +
