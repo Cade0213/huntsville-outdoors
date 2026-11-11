@@ -227,7 +227,7 @@ function renderCalendarEmpty() {
   if (!search) {
     document.getElementById("cal-empty").innerHTML = `
       <div class="empty-state">
-        <div class="empty-icon" aria-hidden="true">📅</div>
+        <div class="empty-icon" aria-hidden="true">${icon("calendar", 26)}</div>
         <h3>Search a location to see its seasons</h3>
         <p>Season dates depend on the state and area you hunt. Enter a U.S. city or town above.</p>
       </div>`;
@@ -241,7 +241,7 @@ function renderCalendarEmpty() {
   const coveredStates = [...new Set(Object.values(SEASON_SCOPES).filter((s) => s.tier === "statewide").map((s) => s.state))].sort();
   document.getElementById("cal-empty").innerHTML = `
     <div class="empty-state">
-      <div class="empty-icon" aria-hidden="true">📅</div>
+      <div class="empty-icon" aria-hidden="true">${icon("calendar", 26)}</div>
       <h3>Season dates aren't built in for ${escapeHtml(search.label)} yet</h3>
       <p>We have hand-checked seasons for ${DETAIL_AREAS.map((a) => escapeHtml(a.label)).join(", ")} and statewide summaries for
       ${coveredStates.length ? coveredStates.join(", ") : "a growing list of states"}. Rather than guess for other areas, we point you

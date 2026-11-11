@@ -101,10 +101,10 @@ function resourceCard(r) {
   const distance = r.distanceMi != null ? `<span class="res-distance">${formatMiles(r.distanceMi)}</span>` : "";
   const directionsQuery = r.address || (r.point && r.point.join(","));
   const address = directionsQuery
-    ? `<div class="res-line">📍 <a href="${directionsUrl(directionsQuery)}" target="_blank" rel="noopener">${escapeHtml(r.address || "Directions")}</a></div>`
+    ? `<div class="res-line">${icon("pin", 15)}<a href="${directionsUrl(directionsQuery)}" target="_blank" rel="noopener">${escapeHtml(r.address || "Directions")}</a></div>`
     : "";
   const phone = r.phone
-    ? `<div class="res-line">📞 <a href="tel:${r.phone.replace(/[^\d+]/g, "")}">${escapeHtml(r.phone)}</a></div>`
+    ? `<div class="res-line">${icon("phone", 15)}<a href="tel:${r.phone.replace(/[^\d+]/g, "")}">${escapeHtml(r.phone)}</a></div>`
     : "";
   const link = r.url
     ? `<a class="res-link" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.linkText || "Visit website")} &rarr;</a>`

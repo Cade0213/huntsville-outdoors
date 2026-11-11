@@ -43,7 +43,13 @@ Verification is done by driving the real page in a browser and asserting against
 
 Useful URL parameters for manual testing:
 - `?q=&lat=&lng=&st=&r=` — restores a search (`r` must be 10, 25, 50 or 100).
+- `&p=<place id>` — opens that place once the search has loaded it (what the Share button copies).
+- `?view=draws|almanac|calibers|archery` — opens on that section.
 - `?date=YYYY-MM-DD` — overrides `TODAY` in `seasons.js` to preview season status on another day.
+
+The site has a light and a dark theme and follows the OS setting until the visitor uses the toggle,
+so check a visual change in both. In DevTools: Rendering → "Emulate CSS media feature
+prefers-color-scheme", or set `document.documentElement.dataset.theme` to `"light"` / `"dark"`.
 
 ## Architecture
 
@@ -53,10 +59,13 @@ No modules. Every top-level `const` and `function` lands in the shared global sc
 `<script>` order in `index.html` is a real dependency graph:
 
 ```
-states.js → seasons.js → data.js → coverage.js → live.js → resources.js → calendar.js → almanac.js → calibers.js → archery.js → script.js
-          → draws-data.js → draws.js
+ui.js → states.js → seasons.js → data.js → coverage.js → live.js → resources.js → calendar.js → almanac.js → calibers.js → archery.js → script.js
+      → draws-data.js → draws.js
 ```
 
+- `ui.js` is first and depends on nothing: icons (`icon()`), storage helpers, the theme toggle,
+  toasts, `bindTabKeys()`, and the recent-search / saved-place lists. It runs `hydrateIcons()` and
+  `initTheme()` at load, which only touch markup that is already in the page.
 - `data.js` references `SEASON_SCOPES` from `seasons.js`, so it must come after it.
 - `coverage.js` references `LOCATIONS` and `HUNTSVILLE` from `data.js`, so it must come after it.
 - `almanac.js` sits **before** `script.js`, like `calendar.js` and `resources.js`: it defines
@@ -85,7 +94,8 @@ states.js → seasons.js → data.js → coverage.js → live.js → resources.j
 
 | File | Role |
 |---|---|
-| `script.js` | App shell: `appState`, Leaflet map, search, results list, detail card, panel tabs, resizable split |
+| `ui.js` | Shared helpers with no dependencies: icons, `localStorage` wrappers, theme, toasts, tab arrow keys, recent searches, saved places |
+| `script.js` | App shell: `appState`, Leaflet map, search, welcome panel, results list, detail card, panel tabs, resizable split, phone sheet |
 | `live.js` | All network I/O (PAD-US, TIGERweb, Photon/Nominatim, Overpass, NWS weather and alerts, USGS gauges, NOAA tides, NIFC wildfires, USFS MVUM) + geometry math |
 | `data.js` | Hand-written curated Huntsville places (`LOCATIONS`) |
 | `seasons.js` | Alabama season dates, `GAME`, and the shared date helpers (`parseDay`, `TODAY`, `daysBetween`, `formatDay`) |
@@ -116,6 +126,23 @@ for anything new will hijack the panel tabs.** Same for the ids `calendar.js` ow
 `setView("map")` must call `restoreSplit()` and `map.invalidateSize()`, because `#app` is
 `display:none` while the Draws tab is showing and Leaflet loses its size.
 
+Both tab strips use a roving tabindex (only the selected tab is in the Tab order), so each needs
+its `bindTabKeys()` call or the other tabs cannot be reached from the keyboard.
+
+### Map Locator states
+
+- **No search yet**: `renderList()` keeps `body.no-search` in step with `appState.search`. CSS uses
+  that one class to show the welcome panel and hide the filters, list and map key. Don't add a
+  second flag.
+- **With a search**: the area card (`.area-card`) shows the label, the result count and four
+  condition tiles. `renderConditions()` fills the tiles from `almanacState` and is called at the
+  end of `renderAlmanac()`, so it follows the same weather fetch — it never fetches on its own.
+- **A place to open later**: `pendingPlaceId` (set from `?p=` or a saved place) is resolved by
+  `resolvePendingPlace()` after each data source lands. It waits for PAD-US *and* the state layers,
+  because a PAD-US parcel can still be swapped for its agency twin under a different id.
+- **Phones**: the panel is a sheet with three heights in `data-sheet` on `#app` (`map`, `split`,
+  `list`), laid out in CSS and set only through `setSheet()`.
+
 ### Search radius semantics
 
 The radius is enforced in **`visiblePlaces()`**, not in `curatedPlaces()`. `curatedPlaces()`
@@ -136,6 +163,10 @@ Two distances matter and are easy to confuse:
 Markers and polygons use exactly two colours: orange (`--hunting`) for anything huntable, blue
 (`--fishing`) otherwise, via `activityKey()`. There is no third "both" colour.
 
+Selecting or hovering a place restyles only that place's layers through `emphasizePlace()`.
+`renderMapLayers()` rebuilds every layer and is for when the *set* of places changes (new data, a
+filter); the name filter debounces it. Don't call it for a selection change.
+
 PAD-US boundary fidelity is tuned by two params in `fetchPublicLands()` (`live.js`):
 `maxAllowableOffset` (degrees, tiered by search radius) and `geometryPrecision: 5`. Coarser values
 produce visible stair-stepping. Leaflet's `smoothFactor` is left at its default `1` on purpose —
@@ -155,9 +186,19 @@ point-in-polygon state assignment and are never drawn.
 ### Other conventions worth knowing
 
 - `writeUrl()` calls `history.replaceState` with only `location.pathname + search`, which **drops
-  any hash**. Don't put tab state in the URL hash.
-- Split ratio persists in `localStorage` under `plw.splitRatio`. All reads and writes are wrapped
-  in try/catch because the app is expected to run from `file://`.
+  any hash**. Don't put tab state in the URL hash; `setView()` uses the `view` query parameter,
+  which `writeUrl()` preserves because it starts from the current query string.
+- `localStorage` keys, all optional conveniences: `plw.splitRatio`, `plw.theme`,
+  `plw.recentSearches`, `plw.savedPlaces`, `plw.drawPins`, `plw.calibers`, `plw.archery`. All reads
+  and writes are wrapped in try/catch because the app is expected to run from `file://`; new code
+  should use `loadStored()` / `saveStored()` from `ui.js`.
+- `styles.css` is one file with a numbered contents list at the top. Colours come from the tokens
+  in its first section, and the dark theme only re-points those tokens, so a new rule should not
+  need a hex value. Two things to know: `--forest` / `--forest-dark` are brand *fills* that never
+  flip (use `--heading` / `--link` for text and `--select` for an "on" state), and
+  `.leaflet-container` re-declares the light text tokens because the map is always a light sheet.
+- Icons are inline SVG from `icon(name, size)` in `ui.js`; static markup asks for one with
+  `<span data-icon="name">`. No emoji as UI icons — they render differently on every platform.
 - `parseDay()` builds dates with `new Date(y, m-1, d)` (local midnight), so there is no UTC
   off-by-one. Reuse it rather than writing new date parsing.
 - Overpass community mirrors are frequently overloaded; `errors.osm` is often transient. Before

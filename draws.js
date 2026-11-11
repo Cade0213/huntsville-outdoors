@@ -593,6 +593,18 @@ function setView(name) {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.dataset.view !== name));
   document.body.classList.toggle("on-draws", name === "draws");
 
+  // Keep the section in the address (?view=draws) so a copied link opens on it. writeUrl() in
+  // script.js starts from the current query string, so a later search keeps this parameter.
+  try {
+    const params = new URLSearchParams(location.search);
+    if (name === "map") params.delete("view");
+    else params.set("view", name);
+    const query = params.toString();
+    history.replaceState(null, "", location.pathname + (query ? `?${query}` : ""));
+  } catch {
+    // history can be blocked on file:// pages; the tabs work without it.
+  }
+
   if (name === "map") {
     // The map was display:none, so Leaflet needs its size back, and the saved split has to be
     // re-applied in case the window was resized while this view was hidden.
@@ -604,5 +616,11 @@ function setView(name) {
 document.querySelectorAll(".site-tab").forEach((tab) =>
   tab.addEventListener("click", () => setView(tab.dataset.view))
 );
+// Only the selected section tab is in the Tab order, so the arrow keys are how a keyboard reaches the rest.
+bindTabKeys(document.querySelector(".site-tabs"), ".site-tab", (tab) => setView(tab.dataset.view));
 
 initDraws();
+
+// A link can open on a section: ?view=draws, almanac, calibers or archery.
+const initialView = new URLSearchParams(location.search).get("view");
+if (initialView && initialView !== "map" && document.querySelector(`.view[data-view="${CSS.escape(initialView)}"]`)) setView(initialView);

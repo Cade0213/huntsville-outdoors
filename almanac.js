@@ -886,6 +886,7 @@ function renderAlmanac() {
   $a("alm-water").innerHTML = waterSection();
   $a("alm-official").innerHTML = resourcesSection();
   renderAlmanacDay();
+  renderConditions(); // the Map Locator's area card shows the same forecast in four tiles (script.js)
 }
 
 function setAlmanacDay(offset) {

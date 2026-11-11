@@ -5,10 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Public Lands &amp; Waters – Hunting &amp; Fishing Finder</title>
   <meta name="description" content="Unofficial map of public hunting and fishing opportunities near any U.S. city, with season dates and license resources." />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#1f3325" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Public Lands &amp; Waters – Hunting &amp; Fishing Finder" />
+  <meta property="og:description" content="Map public hunting land and fishing access near any U.S. city, with season dates, draw deadlines and links to the official source." />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="images/icon-180.png" />
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
+  <link rel="preconnect" href="https://server.arcgisonline.com" />
+  <script>
+    // Pick the theme before first paint so the page never flashes the wrong one. A stored choice
+    // wins; otherwise follow the OS. ui.js wires the toggle.
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem("plw.theme"); } catch (e) {}
+      if (t !== "light" && t !== "dark") {
+        t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
+        integrity="sha512-h9FcoyWjHcOcmEVkxOfTLnmZFWIH0iZhZT1H2TbOq55xssQGEJHEaIm+PgoUaZbRvQTNTluNOEfb1ZRy6D3BOw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body class="no-search">
+  <a class="skip-link" href="#app" id="skip-link">Skip to content</a>
   <header class="topbar">
     <svg class="topbar-scene" viewBox="0 0 2400 100" preserveAspectRatio="xMidYMax slice" aria-hidden="true" focusable="false">
     <defs>
@@ -87,61 +110,69 @@
     </div>
 
     <form class="search" id="search-form" role="search" autocomplete="off">
+      <!-- One pill: city box, radius and the submit button. The suggestions list hangs off it. -->
       <div class="search-box">
         <label for="city-search" class="sr-only">Search for a U.S. city</label>
         <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 3a5.5 5.5 0 014.38 8.82l3.65 3.65-1.06 1.06-3.65-3.65A5.5 5.5 0 118.5 3zm0 1.5a4 4 0 100 8 4 4 0 000-8z" fill="currentColor"/></svg>
-        <input id="city-search" type="search" placeholder="Search a city, e.g. Boise, ID" role="combobox"
-               aria-autocomplete="list" aria-expanded="false" aria-controls="city-suggestions" spellcheck="false" />
+        <input id="city-search" type="search" placeholder="Search a city or town" role="combobox"
+               aria-autocomplete="list" aria-expanded="false" aria-controls="city-suggestions" spellcheck="false"
+               enterkeyhint="search" autocapitalize="words" />
+        <kbd class="search-kbd" aria-hidden="true">/</kbd>
         <button type="button" class="search-clear" id="search-clear" aria-label="Clear search and results" title="Clear search">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 5.5l9 9m0-9l-9 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
-        <ul id="city-suggestions" class="suggestions" role="listbox" hidden></ul>
+        <span class="search-divider" aria-hidden="true"></span>
+        <label class="radius">
+          <span class="sr-only">Search radius</span>
+          <select id="radius-select" aria-label="Search radius">
+            <option value="10">10 mi</option>
+            <option value="25">25 mi</option>
+            <option value="50" selected>50 mi</option>
+            <option value="100">100 mi</option>
+          </select>
+        </label>
+        <button type="submit" class="search-go" aria-label="Search">
+          <span data-icon="search" data-size="18"></span>
+          <span class="search-go-text">Search</span>
+        </button>
+        <ul id="city-suggestions" class="suggestions" role="listbox" aria-label="Search suggestions" hidden></ul>
       </div>
-      <label class="radius">
-        <span class="sr-only">Search radius</span>
-        <select id="radius-select" aria-label="Search radius">
-          <option value="10">10 mi</option>
-          <option value="25">25 mi</option>
-          <option value="50" selected>50 mi</option>
-          <option value="100">100 mi</option>
-        </select>
-      </label>
-      <button type="submit" class="btn-primary">Search</button>
     </form>
   </header>
+
 
   <!-- Top-level sections. Distinct classes from the panel's own .tab strip inside Map Locator. -->
   <div class="site-bar">
   <nav class="site-tabs" role="tablist" aria-label="Sections">
-    <button type="button" role="tab" class="site-tab" data-view="map" aria-selected="true" tabindex="0">
+    <button type="button" role="tab" class="site-tab" id="site-tab-map" data-view="map" aria-controls="app" aria-selected="true" tabindex="0">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"
           d="M9 3.5 3.5 6v14.5L9 18l6 2.5 5.5-2.5V3.5L15 6 9 3.5zM9 3.5V18M15 6v14.5"/>
       </svg>
       <span class="lbl-long">Map Locator</span><span class="lbl-short">Map</span>
     </button>
-    <button type="button" role="tab" class="site-tab" data-view="draws" aria-selected="false" tabindex="-1">
+    <button type="button" role="tab" class="site-tab" id="site-tab-draws" data-view="draws" aria-controls="draws-view" aria-selected="false" tabindex="-1">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
           d="M12 3.5a8.5 8.5 0 108.5 8.5M12 8a4 4 0 104 4M12 12l8.5-8.5M17 3.5h3.5V7"/>
       </svg>
       <span class="lbl-long">Hunting Draws</span><span class="lbl-short">Draws</span>
     </button>
-    <button type="button" role="tab" class="site-tab" data-view="almanac" aria-selected="false" tabindex="-1">
+    <button type="button" role="tab" class="site-tab" id="site-tab-almanac" data-view="almanac" aria-controls="almanac-view" aria-selected="false" tabindex="-1">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
           d="M20.4 14.3A8.6 8.6 0 019.7 3.6a8.5 8.5 0 1010.7 10.7z"/>
       </svg>
       <span>Almanac</span>
     </button>
-    <button type="button" role="tab" class="site-tab" data-view="calibers" aria-selected="false" tabindex="-1">
+    <button type="button" role="tab" class="site-tab" id="site-tab-calibers" data-view="calibers" aria-controls="calibers-view" aria-selected="false" tabindex="-1">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
           d="M12 3.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zM12 8a4 4 0 100 8 4 4 0 000-8zM12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5"/>
       </svg>
       <span class="lbl-long">Big Game &amp; Calibers</span><span class="lbl-short">Calibers</span>
     </button>
-    <button type="button" role="tab" class="site-tab" data-view="archery" aria-selected="false" tabindex="-1">
+    <button type="button" role="tab" class="site-tab" id="site-tab-archery" data-view="archery" aria-controls="archery-view" aria-selected="false" tabindex="-1">
       <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
           d="M9 3c6.5 4.5 6.5 13.5 0 18M9 3 6 12l3 9M3 12h19M18.5 9l3.5 3-3.5 3M3 9.5l2.5 2.5L3 14.5"/>
@@ -149,6 +180,7 @@
       <span>Archery</span>
     </button>
   </nav>
+  <div class="site-tools">
   <div class="disclaimer" role="note" id="disclaimer">
     <button type="button" class="disclaimer-toggle" id="disclaimer-toggle" aria-expanded="false" aria-describedby="disclaimer-text">
       <span aria-hidden="true">⚠️</span>
@@ -165,56 +197,141 @@
       and the managing agency. Regulations change.
     </p>
   </div>
+  <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch theme">
+    <span class="theme-ico theme-ico-moon" data-icon="moon" data-size="18"></span>
+    <span class="theme-ico theme-ico-sun" data-icon="sun" data-size="18"></span>
+  </button>
+  </div>
   </div>
 
-  <div class="app view" id="app" data-view="map">
-    <!-- Side panel: tabs for places / seasons / licenses. On phones it sits under the map. -->
+  <div class="app view" id="app" data-view="map" data-sheet="split" role="tabpanel" aria-labelledby="site-tab-map" tabindex="-1">
+    <!-- Side panel: tabs for places / seasons / licenses. On phones it sits under the map as a sheet. -->
     <aside class="panel" id="panel" aria-label="Results and details">
-      <nav class="tabs" role="tablist">
-        <button type="button" role="tab" class="tab" data-tab="places" aria-selected="true">Places <span class="tab-count" id="tab-count"></span></button>
-        <button type="button" role="tab" class="tab" data-tab="seasons" aria-selected="false">Seasons</button>
-        <button type="button" role="tab" class="tab" data-tab="resources" aria-selected="false">Licenses &amp; Gear</button>
+      <button type="button" class="sheet-handle" id="sheet-handle" aria-label="Resize the list. Tap to expand or collapse it.">
+        <span aria-hidden="true"></span>
+      </button>
+      <nav class="tabs" role="tablist" aria-label="Map Locator sections">
+        <button type="button" role="tab" class="tab" id="tab-places" data-tab="places" aria-controls="panel-body" aria-selected="true">Places <span class="tab-count" id="tab-count"></span></button>
+        <button type="button" role="tab" class="tab" id="tab-seasons" data-tab="seasons" aria-controls="panel-body" aria-selected="false" tabindex="-1">Seasons</button>
+        <button type="button" role="tab" class="tab" id="tab-resources" data-tab="resources" aria-controls="panel-body" aria-selected="false" tabindex="-1">Licenses &amp; Gear</button>
       </nav>
 
-      <div class="panel-body" id="panel-body">
+      <div class="panel-body" id="panel-body" role="tabpanel" aria-labelledby="tab-places" tabindex="-1">
         <!-- PLACES: list view -->
         <section class="tab-panel" data-panel="places" id="places-list-view">
-          <div class="filters">
-            <div class="segmented" role="radiogroup" aria-label="Activity">
-              <label><input type="radio" name="activity" value="hunting" /><span>Hunting</span></label>
-              <label><input type="radio" name="activity" value="fishing" /><span>Fishing</span></label>
-              <label><input type="radio" name="activity" value="both" checked /><span>Both</span></label>
+          <!-- Before the first search: what the site does and the quickest ways in. script.js fills
+               the saved, recent and example lists. -->
+          <div class="welcome" id="welcome">
+            <div class="welcome-hero">
+              <span class="bg-k">Map Locator</span>
+              <h2>Find public land to hunt &amp; fish</h2>
+              <p>Search any U.S. city to map public hunting land and fishing access around it, with season dates,
+                licenses and a link to the official source for every place.</p>
+              <div class="welcome-actions">
+                <button type="button" class="btn-primary" id="locate-btn">
+                  <span data-icon="locate" data-size="17"></span><span>Use my location</span>
+                </button>
+                <button type="button" class="btn-ghost" data-focus-search>
+                  <span data-icon="search" data-size="17"></span><span>Search a city</span>
+                </button>
+              </div>
             </div>
-            <div class="filter-row">
-              <input type="search" id="list-filter" class="list-filter" placeholder="Filter by name…" aria-label="Filter results by name" />
-              <label class="game-wrap" id="map-game-wrap">
-                <span class="sr-only">Game season</span>
-                <select id="map-game" class="game-select" aria-label="Game season"></select>
-              </label>
-            </div>
-            <div class="check-row">
-              <label class="check">
-                <input type="checkbox" role="switch" id="show-unconfirmed" checked />
-                <span>Include unconfirmed public lands</span>
-              </label>
-              <button type="button" class="info-tip" id="unconfirmed-info" aria-label="What are unconfirmed public lands?" aria-describedby="unconfirmed-tip" aria-expanded="false">
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
-                  <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
-                  <circle cx="12" cy="7.8" r="1.25" fill="currentColor"/>
-                  <path d="M12 11v6.2" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
-                </svg>
-              </button>
-              <span class="info-tip-text" role="tooltip" id="unconfirmed-tip">
-                <strong>Unconfirmed</strong> places come from USGS PAD-US (public land boundaries) and OpenStreetMap
-                (mapped fishing spots). Those sources show that land is public or that a spot exists, but not whether
-                hunting or fishing is allowed there. Verify with the managing agency before you go. Switch this off to
-                see only places backed by a hand-checked or state agency record.
-              </span>
-            </div>
+
+            <section class="welcome-group" id="welcome-saved" aria-labelledby="welcome-saved-h" hidden>
+              <h3 class="mini-head" id="welcome-saved-h">Saved places</h3>
+              <ul class="saved-list" id="saved-list"></ul>
+            </section>
+
+            <section class="welcome-group" id="welcome-recent" aria-labelledby="welcome-recent-h" hidden>
+              <div class="welcome-group-head">
+                <h3 class="mini-head" id="welcome-recent-h">Recent searches</h3>
+                <button type="button" class="link-btn" id="recent-clear">Clear</button>
+              </div>
+              <div class="chip-row" id="recent-list"></div>
+            </section>
+
+            <section class="welcome-group" aria-labelledby="welcome-try-h">
+              <h3 class="mini-head" id="welcome-try-h">Try an example</h3>
+              <div class="chip-row" id="example-list"></div>
+            </section>
+
+            <ul class="welcome-points">
+              <li>
+                <span class="welcome-point-icon" data-icon="map" data-size="18"></span>
+                <div><strong>Public land, mapped</strong>
+                  <span>Federal and state boundaries from USGS PAD-US, plus official state agency records where a state publishes them.</span></div>
+              </li>
+              <li>
+                <span class="welcome-point-icon" data-icon="calendar" data-size="18"></span>
+                <div><strong>Seasons, licenses and draws</strong>
+                  <span>Season calendars where they are built in, and the licensing agency for every state you search.</span></div>
+              </li>
+              <li>
+                <span class="welcome-point-icon" data-icon="info" data-size="18"></span>
+                <div><strong>Always verify</strong>
+                  <span>This is not an official source. Every place links to the agency that sets the rules.</span></div>
+              </li>
+            </ul>
           </div>
 
-          <div class="results-head">
-            <p id="results-summary" aria-live="polite"></p>
+          <!-- With a search: the area card (headline + current conditions), then the filters. -->
+          <div class="places-head" id="places-head">
+            <section class="area-card" aria-label="Search area">
+              <div class="area-top">
+                <div class="area-title">
+                  <span class="bg-k">Search area</span>
+                  <h2 id="area-title"></h2>
+                  <p id="results-summary" aria-live="polite"></p>
+                </div>
+                <button type="button" class="area-btn" id="area-share" aria-label="Copy a link to this search" title="Copy a link to this search">
+                  <span data-icon="share" data-size="17"></span>
+                </button>
+              </div>
+              <button type="button" class="area-now" id="area-now" aria-label="Current conditions. Open the Almanac for the full picture."></button>
+            </section>
+
+            <div class="filters">
+              <div class="segmented" role="radiogroup" aria-label="Activity">
+                <label><input type="radio" name="activity" value="hunting" /><span><i class="seg-dot hunting" aria-hidden="true"></i>Hunting</span></label>
+                <label><input type="radio" name="activity" value="fishing" /><span><i class="seg-dot fishing" aria-hidden="true"></i>Fishing</span></label>
+                <label><input type="radio" name="activity" value="both" checked /><span>Both</span></label>
+              </div>
+              <div class="filter-row">
+                <label class="field-icon">
+                  <span data-icon="search" data-size="16"></span>
+                  <input type="search" id="list-filter" class="list-filter" placeholder="Filter by name…" aria-label="Filter results by name" />
+                </label>
+                <label class="sort-wrap">
+                  <span class="sr-only">Sort results</span>
+                  <select id="list-sort" aria-label="Sort results">
+                    <option value="distance">Nearest</option>
+                    <option value="size">Largest</option>
+                    <option value="name">A–Z</option>
+                  </select>
+                </label>
+              </div>
+              <div class="filter-row filter-row-wrap">
+                <div class="check-row">
+                  <label class="check">
+                    <input type="checkbox" role="switch" id="show-unconfirmed" checked />
+                    <span>Show unconfirmed</span>
+                  </label>
+                  <button type="button" class="info-tip" id="unconfirmed-info" aria-label="What are unconfirmed places?" aria-describedby="unconfirmed-tip" aria-expanded="false">
+                    <span data-icon="info" data-size="18"></span>
+                  </button>
+                  <span class="info-tip-text" role="tooltip" id="unconfirmed-tip">
+                    <strong>Unconfirmed</strong> places come from USGS PAD-US (public land boundaries) and OpenStreetMap
+                    (mapped fishing spots). Those sources show that land is public or that a spot exists, but not whether
+                    hunting or fishing is allowed there. Verify with the managing agency before you go. Switch this off to
+                    see only places backed by a hand-checked or state agency record.
+                  </span>
+                </div>
+                <label class="game-wrap" id="map-game-wrap">
+                  <span class="sr-only">Game season</span>
+                  <select id="map-game" class="game-select" aria-label="Game season"></select>
+                </label>
+              </div>
+            </div>
           </div>
 
           <p class="coverage-note" id="coverage-note" hidden></p>
@@ -293,11 +410,14 @@
 
     <main class="map-area">
       <div id="map" aria-label="Map of public hunting and fishing areas"></div>
-      <div class="map-prompt" id="map-prompt" role="status">
-        <strong>Search a location to get started</strong>
-        <span>Enter a U.S. city or town above to find public hunting and fishing land nearby.</span>
-        <button type="button" class="btn-primary map-prompt-btn" data-focus-search>Search for a city</button>
-      </div>
+      <!-- Shown until the first search. Ignores the pointer, so the map still pans underneath. -->
+      <p class="map-prompt" id="map-prompt" role="status">
+        <span data-icon="search" data-size="16"></span>
+        <span>Search a city above, or <span class="hint-mouse">right-click</span><span class="hint-touch">press and hold</span> the map to search any spot.</span>
+      </p>
+      <button type="button" class="map-search-here" id="map-search-here" hidden>
+        <span data-icon="search" data-size="16"></span><span>Search this area</span>
+      </button>
       <ul class="map-legend" aria-label="Map key">
         <li><span class="key-pin hunting"></span>Hunting land</li>
         <li><span class="key-pin fishing"></span>Fishing access</li>
@@ -311,7 +431,7 @@
   <!-- HUNTING DRAWS -->
   <!-- Shell only. draws.js builds every row once and filters them in place, so nothing here is
        re-rendered on a filter change. Layout classes are shared with the Big Game tab (bg-*). -->
-  <section class="view draws-view" id="draws-view" data-view="draws" aria-label="Hunting draws" hidden>
+  <section class="view draws-view" id="draws-view" data-view="draws" role="tabpanel" aria-labelledby="site-tab-draws" tabindex="-1" aria-label="Hunting draws" hidden>
     <div class="draws-scroll">
       <div class="draws-inner">
         <p class="alm-disclaimer" role="note">
@@ -416,14 +536,14 @@
   </section>
 
   <!-- ALMANAC -->
-  <section class="view almanac-view" id="almanac-view" data-view="almanac" aria-label="Almanac" hidden>
+  <section class="view almanac-view" id="almanac-view" data-view="almanac" role="tabpanel" aria-labelledby="site-tab-almanac" tabindex="-1" aria-label="Almanac" hidden>
     <div class="almanac-scroll">
       <div class="almanac-inner">
         <!-- Its own element, not the global #disclaimer bar: that one is per-state and clamped on
              phones. This text is fixed and must stay fully visible. -->
         <p class="alm-disclaimer" id="almanac-disclaimer" role="note"></p>
         <div class="empty-state" id="almanac-empty" hidden>
-          <div class="empty-icon" aria-hidden="true">🌙</div>
+          <div class="empty-icon" aria-hidden="true" data-icon="moon" data-size="26"></div>
           <h3>Search a location to see its almanac</h3>
           <p>Sunrise, sunset, moon and solunar times and the weather forecast are for the place you search.</p>
         </div>
@@ -433,7 +553,7 @@
   </section>
 
   <!-- BIG GAME & CALIBERS -->
-  <section class="view bg-view" id="calibers-view" data-view="calibers" aria-label="Big game and calibers" hidden>
+  <section class="view bg-view" id="calibers-view" data-view="calibers" role="tabpanel" aria-labelledby="site-tab-calibers" tabindex="-1" aria-label="Big game and calibers" hidden>
     <div class="bg-scroll">
       <div class="bg-inner">
         <!-- Its own fixed, fully visible disclaimer, like the Almanac's. -->
@@ -445,7 +565,7 @@
 
   <!-- ARCHERY -->
   <!-- Reuses the Big Game shell classes (bg-view / bg-scroll / bg-inner); archery.js owns ar-* ids. -->
-  <section class="view bg-view" id="archery-view" data-view="archery" aria-label="Archery" hidden>
+  <section class="view bg-view" id="archery-view" data-view="archery" role="tabpanel" aria-labelledby="site-tab-archery" tabindex="-1" aria-label="Archery" hidden>
     <div class="bg-scroll">
       <div class="bg-inner">
         <p class="alm-disclaimer" id="archery-disclaimer" role="note"></p>
@@ -454,7 +574,11 @@
     </div>
   </section>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"
+          integrity="sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="ui.js"></script>
   <script src="states.js"></script>
   <script src="seasons.js"></script>
   <script src="data.js"></script>

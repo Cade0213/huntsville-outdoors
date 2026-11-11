@@ -1,7 +1,7 @@
 // App shell: city search, map, results list, detail panel and tabs.
 // Data: data.js (hand-checked places), seasons.js (AL season dates), live.js (nationwide lookups),
 // states.js (state agencies), resources.js (licenses & gear), calendar.js (season calendar),
-// almanac.js (almanac tab).
+// almanac.js (almanac tab). ui.js supplies icons, storage, toasts, recent searches and saved places.
 
 // Required disclaimer. In Alabama it names ADCNR verbatim; elsewhere it names that state's wildlife agency.
 const AL_AGENCY_NAME = "Alabama Department of Conservation and Natural Resources (Outdoor Alabama)";
@@ -25,6 +25,7 @@ const appState = {
   activity: "both",
   game: "all",
   filterText: "",
+  sort: "distance", // "distance" | "size" | "name"; confirmed places always list first
   showUnconfirmed: true,
   tab: "places",
   selectedId: null,
@@ -56,6 +57,10 @@ function formatMiles(mi) {
   if (mi < 0.05) return "0 mi";
   if (mi < 1) return "<1 mi";
   return `${Math.round(mi)} mi`;
+}
+
+function placeById(id) {
+  return appState.places.find((p) => p.id === id) || null;
 }
 
 // Map and list indicators use one colour per activity: anything huntable is orange, the rest blue.
@@ -320,8 +325,16 @@ function assignStates() {
   for (const p of appState.places) p.state = stateForPoint(p.point, appState.areaStatePolys, p.state || appState.search.state);
 }
 
+// The orderings the list offers. Each falls back to distance, so ties never shuffle.
+const PLACE_SORTS = {
+  distance: (a, b) => a.distanceMi - b.distanceMi,
+  size: (a, b) => (b.acres || 0) - (a.acres || 0) || a.distanceMi - b.distanceMi,
+  name: (a, b) => a.name.localeCompare(b.name, "en", { numeric: true }) || a.distanceMi - b.distanceMi,
+};
+
 function visiblePlaces() {
   const q = normalizeName(appState.filterText);
+  const order = PLACE_SORTS[appState.sort] || PLACE_SORTS.distance;
   return appState.places
     .filter(
       (p) =>
@@ -330,8 +343,8 @@ function visiblePlaces() {
         (appState.showUnconfirmed || isConfirmed(p)) &&
         (!q || normalizeName(p.name).includes(q))
     )
-    // Confirmed places first (hand-checked or official agency records), then everything else by distance.
-    .sort((a, b) => (isConfirmed(a) ? 0 : 1) - (isConfirmed(b) ? 0 : 1) || a.distanceMi - b.distanceMi);
+    // Confirmed places first (hand-checked or official agency records), then everything else in the chosen order.
+    .sort((a, b) => (isConfirmed(a) ? 0 : 1) - (isConfirmed(b) ? 0 : 1) || order(a, b));
 }
 
 // ---------- Map layers ----------
@@ -356,7 +369,12 @@ function markerPoint(place) {
   return best;
 }
 
-function markerFor(place, selected) {
+// A place is drawn in one of three states: plain, "hover" (its list row is under the pointer or has
+// keyboard focus) or "selected". Both functions below take that state, so emphasizePlace() can
+// restyle one place in place instead of rebuilding every layer.
+const DOT_RADIUS = { selected: 9, hover: 8 };
+
+function markerFor(place, state) {
   const key = activityKey(place);
   const color = COLORS[key];
   const point = markerPoint(place);
@@ -364,10 +382,10 @@ function markerFor(place, selected) {
     return L.marker(point, {
       title: place.name,
       riseOnHover: true,
-      zIndexOffset: selected ? 1000 : 0,
+      zIndexOffset: state ? 1000 : 0,
       icon: L.divIcon({
         className: "",
-        html: `<div class="pin ${key} ${selected ? "selected" : ""}"></div>`,
+        html: `<div class="pin ${key} ${state || ""}"></div>`,
         iconSize: [22, 22],
         iconAnchor: [11, 11],
       }),
@@ -375,7 +393,7 @@ function markerFor(place, selected) {
   }
   return L.circleMarker(point, {
     bubblingMouseEvents: false,
-    radius: selected ? 9 : 6,
+    radius: DOT_RADIUS[state] || 6,
     color: "#fff",
     weight: 2,
     fillColor: color,
@@ -383,18 +401,54 @@ function markerFor(place, selected) {
   });
 }
 
-function shapeFor(place, selected) {
+function shapeStyle(place, state) {
   const color = COLORS[activityKey(place)];
-  const curated = isConfirmed(place);
-  return L.polygon(place.polygons, {
-    bubblingMouseEvents: false,
+  const confirmed = isConfirmed(place);
+  const selected = state === "selected";
+  const hover = state === "hover";
+  return {
     color,
-    weight: selected ? 3 : curated ? 2 : 1.2,
-    opacity: selected ? 1 : 0.8,
+    weight: selected ? 3 : hover ? 2.6 : confirmed ? 2 : 1.2,
+    opacity: selected || hover ? 1 : 0.8,
     fillColor: color,
-    fillOpacity: selected ? 0.28 : curated ? 0.16 : 0.08,
+    fillOpacity: selected ? 0.28 : hover ? 0.24 : confirmed ? 0.16 : 0.08,
     dashArray: place.placeholderBoundary ? "6 6" : null,
-  });
+  };
+}
+
+function shapeFor(place, state) {
+  return L.polygon(place.polygons, { bubblingMouseEvents: false, ...shapeStyle(place, state) });
+}
+
+// Restyle one place's shape and marker for `state` ("selected", "hover" or null). Selecting or
+// hovering a place used to rebuild every layer on the map; this touches only the one that changed.
+function emphasizePlace(id, state) {
+  const layers = layerById.get(id);
+  const place = layers && placeById(id);
+  if (!place) return;
+  layers.shape?.setStyle(shapeStyle(place, state));
+  const marker = layers.marker;
+  if (!marker) return;
+  if (marker instanceof L.CircleMarker) {
+    marker.setRadius(DOT_RADIUS[state] || 6);
+    if (state) marker.bringToFront();
+  } else {
+    const pin = marker.getElement()?.firstElementChild;
+    if (pin) {
+      pin.classList.toggle("selected", state === "selected");
+      pin.classList.toggle("hover", state === "hover");
+    }
+    marker.setZIndexOffset(state ? 1000 : 0);
+  }
+}
+
+// The list row under the pointer (or with keyboard focus) lights up its place on the map.
+let hoverId = null;
+function setHoverPlace(id) {
+  if (id === hoverId) return;
+  if (hoverId && hoverId !== appState.selectedId) emphasizePlace(hoverId, null);
+  hoverId = id;
+  if (id && id !== appState.selectedId) emphasizePlace(id, "hover");
 }
 
 // Credits whichever state agencies' records are on the map right now, next to the tile credits.
@@ -411,7 +465,9 @@ function updateStateAttribution(places) {
 function renderMapLayers() {
   placesLayer.clearLayers();
   layerById.clear();
+  hoverId = null;
   const places = visiblePlaces();
+  const stateOf = (place) => (place.id === appState.selectedId ? "selected" : null);
   updateStateAttribution(places);
   const bind = (layer, place) =>
     layer
@@ -429,12 +485,12 @@ function renderMapLayers() {
     // A rough hand-drawn outline must never stand in for a real boundary. Places that have an
     // official PAD-US twin show only their dot until the real polygon arrives (or if it never does).
     if (place.placeholderBoundary && place.padusName) continue;
-    const shape = bind(shapeFor(place, place.id === appState.selectedId), place);
+    const shape = bind(shapeFor(place, stateOf(place)), place);
     placesLayer.addLayer(shape);
     layerById.set(place.id, { shape });
   }
   for (const place of places) {
-    const marker = bind(markerFor(place, place.id === appState.selectedId), place);
+    const marker = bind(markerFor(place, stateOf(place)), place);
     placesLayer.addLayer(marker);
     layerById.set(place.id, { ...(layerById.get(place.id) || {}), marker });
   }
@@ -467,28 +523,140 @@ function activityChips(place) {
   return place.activities.map((a) => `<span class="act act-${a}">${a === "hunting" ? "Hunt" : "Fish"}</span>`).join("");
 }
 
+// Where a place's hunting or fishing status comes from, in a word. The list is grouped the same way.
+function confidenceBadge(place) {
+  if (place.source === "curated") return `<span class="badge verified">${icon("check", 11)}Hand-checked</span>`;
+  if (place.source === "state") return `<span class="badge verified">${icon("check", 11)}Agency record</span>`;
+  return `<span class="badge unconfirmed">Unconfirmed</span>`;
+}
+
+// The coloured tile beside a place's name: filled when its status is confirmed, outlined when it
+// is not — the same split the map makes between a large pin and a small dot.
+function placeIcon(place) {
+  const key = activityKey(place);
+  return `<span class="result-icon ${key}${isConfirmed(place) ? "" : " soft"}" aria-hidden="true">${icon(key === "hunting" ? "hunt" : "fish", 20)}</span>`;
+}
+
+function resultRow(p, search, savedIds) {
+  const [dist, unit] = formatMiles(p.distanceMi).split(" ");
+  const sub = [p.typeLabel, p.acres ? `${p.acres.toLocaleString()} acres` : null, p.state && p.state !== search.state ? p.state : null]
+    .filter(Boolean)
+    .map(escapeHtml)
+    .join(" · ");
+  const saved = savedIds.has(p.id) ? `<span class="badge saved">${icon("starFilled", 10)}Saved</span>` : "";
+  return `
+      <li>
+        <button type="button" class="result ${p.id === appState.selectedId ? "is-selected" : ""}" data-id="${escapeHtml(p.id)}">
+          ${placeIcon(p)}
+          <span class="result-main">
+            <span class="result-name">${escapeHtml(p.name)}</span>
+            <span class="result-sub">${sub}</span>
+            <span class="result-tags">${activityChips(p)}${statusChip(p)}${saved}</span>
+          </span>
+          <span class="result-dist"><b>${dist}</b><small>${unit}</small></span>
+        </button>
+      </li>`;
+}
+
+// Search presets for the welcome panel. Approximate city-centre coordinates — a starting point for
+// a live search, not project data. Chosen to show each level of coverage (see coverage.js).
+const EXAMPLE_SEARCHES = [
+  { label: "Huntsville, AL", center: HUNTSVILLE, state: "AL" },
+  { label: "Asheville, NC", center: [35.5951, -82.5515], state: "NC" },
+  { label: "Chattanooga, TN", center: [35.0456, -85.3097], state: "TN" },
+  { label: "Bozeman, MT", center: [45.677, -111.0429], state: "MT" },
+  { label: "Lander, WY", center: [42.833, -108.7307], state: "WY" },
+  { label: "Moab, UT", center: [38.5733, -109.5498], state: "UT" },
+];
+
+// First-visit panel: the saved places and recent searches kept in this browser, plus the examples.
+function renderWelcome() {
+  const saved = savedPlaces();
+  $("welcome-saved").hidden = !saved.length;
+  $("saved-list").innerHTML = saved
+    .map(
+      (p) => `
+      <li class="saved-item">
+        <button type="button" class="saved-open" data-saved="${escapeHtml(p.id)}">
+          ${placeIcon(p)}
+          <span class="result-main">
+            <span class="result-name">${escapeHtml(p.name)}</span>
+            <span class="result-sub">${escapeHtml([p.typeLabel, `near ${p.search.label}`].filter(Boolean).join(" · "))}</span>
+          </span>
+        </button>
+        <button type="button" class="saved-remove" data-unsave="${escapeHtml(p.id)}" aria-label="Remove ${escapeHtml(p.name)} from saved places">${icon("close", 15)}</button>
+      </li>`
+    )
+    .join("");
+
+  const recent = recentSearches();
+  $("welcome-recent").hidden = !recent.length;
+  $("recent-list").innerHTML = recent
+    .map((s, i) => `<button type="button" class="bg-chip" data-recent="${i}">${escapeHtml(s.label)} <small>${s.radius} mi</small></button>`)
+    .join("");
+  $("example-list").innerHTML = EXAMPLE_SEARCHES.map((s, i) => `<button type="button" class="bg-chip" data-example="${i}">${escapeHtml(s.label)}</button>`).join("");
+}
+
+// The four tiles in the area card: what it is like there right now. Weather is the live NWS
+// forecast the Almanac already fetched (almanac.js); sun times are calculated there too.
+function renderConditions() {
+  const el = $("area-now");
+  const { search } = appState;
+  if (!el || !search) return;
+  const { status, weather } = almanacState;
+  const zone = zoneFor(search.center, weather);
+  const sun = sunTimes(TODAY, search.center[0], search.center[1]);
+  const now = weather?.now;
+  const waiting = status === "loading" || status === "idle";
+  const blank = waiting ? "…" : "—";
+  const tiles = [
+    ["Now", now ? `${now.temperature}°${now.temperatureUnit}` : blank],
+    [now?.windDirection ? `Wind · ${now.windDirection}` : "Wind", now?.windSpeed ? now.windSpeed.replace(" to ", "–") : blank],
+    ["Sunrise", formatClock(sun.sunrise, zone)],
+    ["Sunset", formatClock(sun.sunset, zone)],
+  ];
+  el.innerHTML = tiles
+    .map(([k, v]) => `<span class="area-stat${v === "…" ? " is-loading" : ""}"><span class="bg-k">${escapeHtml(k)}</span><span class="bg-v">${escapeHtml(v)}</span></span>`)
+    .join("");
+  const spoken = [
+    now && `${now.temperature} degrees${now.shortForecast ? `, ${now.shortForecast}` : ""}`,
+    now?.windSpeed && `wind ${now.windSpeed} ${now.windDirection || ""}`.trim(),
+    sun.sunrise != null && `sunrise ${formatClock(sun.sunrise, zone)}`,
+    sun.sunset != null && `sunset ${formatClock(sun.sunset, zone)}`,
+  ].filter(Boolean);
+  el.setAttribute("aria-label", `Conditions in ${search.label} now: ${spoken.join(", ") || "not available"}. Open the Almanac.`);
+  el.title = now?.shortForecast ? `${now.shortForecast} — open the Almanac` : "Open the Almanac";
+}
+
+const filtersActive = () => appState.activity !== "both" || !!appState.filterText.trim() || !appState.showUnconfirmed;
+
+function resetFilters() {
+  Object.assign(appState, { activity: "both", filterText: "", showUnconfirmed: true });
+  $("list-filter").value = "";
+  $("show-unconfirmed").checked = true;
+  document.querySelector('input[name="activity"][value="both"]').checked = true;
+  refreshAll();
+}
+
 function renderList() {
   const places = visiblePlaces();
   const { search, loading, errors } = appState;
+  document.body.classList.toggle("no-search", !search);
   renderCoverageNote();
   if (!search) {
     $("tab-count").textContent = "";
-    $("results-summary").innerHTML = "";
-    $("results-status").innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon" aria-hidden="true">🗺️</div>
-        <h3>Search a location to get started</h3>
-        <p>Enter a U.S. city or town above to see public hunting and fishing land nearby.</p>
-        <button type="button" class="btn-primary" data-focus-search>Search for a city</button>
-      </div>`;
+    $("results-summary").textContent = "";
+    $("results-status").innerHTML = "";
     $("results-list").innerHTML = "";
+    renderWelcome();
     return;
   }
 
   $("tab-count").textContent = places.length ? places.length : "";
+  $("area-title").textContent = search.label;
   $("results-summary").innerHTML = places.length
-    ? `<strong>${places.length}</strong> place${places.length === 1 ? "" : "s"} within ${search.radius} mi of <strong>${escapeHtml(search.label)}</strong>`
-    : `No places yet within ${search.radius} mi of <strong>${escapeHtml(search.label)}</strong>`;
+    ? `<strong>${places.length}</strong> place${places.length === 1 ? "" : "s"} within ${search.radius} miles`
+    : `${loading.lands ? "Searching" : "No places yet"} within ${search.radius} miles`;
 
   const lines = [];
   if (loading.lands) lines.push(`<p class="loading-line"><span class="spinner"></span>Searching federal &amp; state public lands…</p>`);
@@ -499,30 +667,33 @@ function renderList() {
   if (errors.stateLands) lines.push(`<p class="notice">Couldn't load official state agency lands (${escapeHtml(errors.stateLands)}). Areas below may be missing hunting status and official maps. <button type="button" class="link-btn" data-retry>Try again</button></p>`);
   if (errors.osm) lines.push(`<p class="notice">Fishing spots & shops are temporarily unavailable (OpenStreetMap servers are busy). <button type="button" class="link-btn" data-retry>Try again</button></p>`);
   if (!loading.lands && !loading.osm && !places.length && !errors.lands)
-    lines.push(`<p class="notice">Nothing matches these filters. Try a larger radius, “Both”, or clear the name filter.</p>`);
+    lines.push(
+      filtersActive()
+        ? `<p class="notice">Nothing matches these filters. <button type="button" class="link-btn" data-reset-filters>Reset filters</button> or try a larger radius.</p>`
+        : `<p class="notice">No public hunting or fishing places turned up within ${search.radius} miles. Try a larger radius.</p>`
+    );
   $("results-status").innerHTML = lines.join("");
 
-  $("results-list").innerHTML =
-    places
-      .slice(0, LIST_LIMIT)
-      .map(
-        (p) => `
-      <li>
-        <button type="button" class="result ${p.id === appState.selectedId ? "is-selected" : ""}" data-id="${escapeHtml(p.id)}">
-          <span class="result-icon ${activityKey(p)}" aria-hidden="true"></span>
-          <span class="result-main">
-            <span class="result-name">${escapeHtml(p.name)}</span>
-            <span class="result-sub">${escapeHtml(p.typeLabel)}${p.state && p.state !== search.state ? ` · ${p.state}` : ""}${p.outsideRadius ? ` · outside ${search.radius}-mi radius` : ""}</span>
-            <span class="result-tags">${activityChips(p)}${statusChip(p)}</span>
-          </span>
-          <span class="result-dist">${formatMiles(p.distanceMi)}</span>
-        </button>
-      </li>`
-      )
-      .join("") +
-    (places.length > LIST_LIMIT
-      ? `<li class="list-more">Showing the closest ${LIST_LIMIT} of ${places.length}. Narrow the radius or filter by name to see others.</li>`
-      : "");
+  // Placeholders stand in for the list until the first source answers.
+  if (!places.length && loading.lands) {
+    $("results-list").innerHTML = `<li class="result-skeleton" aria-hidden="true"></li>`.repeat(4);
+    return;
+  }
+
+  // Confirmed places lead (visiblePlaces() sorts them first); a heading says why.
+  const shown = places.slice(0, LIST_LIMIT);
+  const savedIds = new Set(savedPlaces().map((s) => s.id));
+  const nConfirmed = places.filter(isConfirmed).length;
+  const group = (title, note, count) => `<li class="results-group"><span>${title}</span><small>${note}</small><b>${count}</b></li>`;
+  let html = "";
+  shown.forEach((p, i) => {
+    if (i === 0 && nConfirmed) html += group("Confirmed", "hand-checked or agency record", nConfirmed);
+    if (i === nConfirmed && nConfirmed < places.length) html += group("Unconfirmed", "public, but check the rules", places.length - nConfirmed);
+    html += resultRow(p, search, savedIds);
+  });
+  if (places.length > LIST_LIMIT)
+    html += `<li class="list-more">Showing the first ${LIST_LIMIT} of ${places.length}. Narrow the radius or filter by name to see others.</li>`;
+  $("results-list").innerHTML = html;
 }
 
 // How much this site knows about the searched state (coverage.js), stated plainly above the list.
@@ -613,27 +784,43 @@ function renderDetail(place) {
     ["Managed by", escapeHtml(place.manager)],
     place.access && ["Access", escapeHtml(place.access)],
     place.acres ? ["Size", `~${place.acres.toLocaleString()} acres`] : null,
-    place.state && STATES[place.state] ? ["State", STATES[place.state].name] : null,
     ...(place.facts || []).map(([k, v]) => [escapeHtml(k), escapeHtml(v)]),
   ].filter(Boolean);
 
   const actions = [];
   const officialUrl = place.mapUrl || place.sourceUrl || (agency && agency.url);
-  if (officialUrl) actions.push(`<a class="btn-primary block" href="${escapeHtml(officialUrl)}" target="_blank" rel="noopener">Official Map &amp; Rules &rarr;</a>`);
+  if (officialUrl) actions.push(`<a class="btn-primary block" href="${escapeHtml(officialUrl)}" target="_blank" rel="noopener">Official Map &amp; Rules${icon("external", 16)}</a>`);
   if (place.pageLink) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.pageLink[1])}" target="_blank" rel="noopener">${escapeHtml(place.pageLink[0])}</a>`);
   for (const [label, url] of place.extraLinks || []) actions.push(`<a class="btn-secondary" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`);
-  actions.push(`<a class="btn-secondary" href="https://www.google.com/maps/dir/?api=1&destination=${place.point[0]},${place.point[1]}" target="_blank" rel="noopener">Directions</a>`);
+  actions.push(`<a class="btn-secondary" href="https://www.google.com/maps/dir/?api=1&destination=${place.point[0]},${place.point[1]}" target="_blank" rel="noopener">${icon("directions", 16)}Directions</a>`);
   if (place.osmUrl) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.osmUrl)}" target="_blank" rel="noopener">View on OpenStreetMap</a>`);
-  actions.push(`<button type="button" class="btn-secondary" data-zoom="${escapeHtml(place.id)}">Zoom to</button>`);
+  actions.push(`<button type="button" class="btn-secondary" data-zoom="${escapeHtml(place.id)}" data-fk="zoom">${icon("zoom", 16)}Zoom to</button>`);
+  const coords = `${place.point[0].toFixed(5)}, ${place.point[1].toFixed(5)}`;
+  actions.push(`<button type="button" class="btn-secondary" data-copy-coords="${coords}" data-fk="coords">${icon("copy", 16)}Copy coordinates</button>`);
 
+  // This view is re-rendered whenever new data lands. If focus was inside it, put it back on the
+  // same control afterwards (data-fk), so a keyboard user is never dropped to the top of the page.
+  const detailEl = $("place-detail");
+  const focusKey = detailEl.contains(document.activeElement) ? document.activeElement.dataset.fk : null;
+  const saved = isSavedPlace(place.id);
+  const where = [place.typeLabel, place.state && STATES[place.state] ? STATES[place.state].name : null].filter(Boolean).join(" · ");
 
-  $("place-detail").innerHTML = `
-    <div class="detail-nav"><button type="button" class="back-btn" data-back>&larr; All places</button></div>
+  detailEl.innerHTML = `
+    <div class="detail-nav">
+      <button type="button" class="back-btn" data-back data-fk="back">${icon("back", 17)}All places</button>
+      <div class="detail-tools">
+        <button type="button" class="tool-btn" data-save="${escapeHtml(place.id)}" data-fk="save" aria-pressed="${saved}">${icon(saved ? "starFilled" : "star", 16)}<span>${saved ? "Saved" : "Save"}</span></button>
+        <button type="button" class="tool-btn" data-share-place data-fk="share">${icon("share", 16)}<span>Share</span></button>
+      </div>
+    </div>
     <header class="detail-head">
-      <div class="result-tags">${activityChips(place)}${statusChip(place)}</div>
-      <h2>${escapeHtml(place.name)}</h2>
-      <p class="detail-type">${escapeHtml(place.typeLabel)}</p>
+      ${placeIcon(place)}
+      <div>
+        <h2 id="detail-title" tabindex="-1" data-fk="title">${escapeHtml(place.name)}</h2>
+        <p class="detail-type">${escapeHtml(where)}</p>
+      </div>
     </header>
+    <div class="result-tags">${activityChips(place)}${statusChip(place)}${confidenceBadge(place)}</div>
     <p class="detail-desc">${escapeHtml(place.description)}</p>
     <dl class="facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>
     ${!isConfirmed(place) ? `<div class="notice warn"><strong>Not confirmed open to hunting or fishing.</strong> ${escapeHtml(landNote(place))}</div>` : ""}
@@ -652,6 +839,7 @@ function renderDetail(place) {
           ? 'Boundary: <a href="https://www.usgs.gov/programs/gap-analysis-project/science/protected-areas" target="_blank" rel="noopener">USGS PAD-US</a> (simplified).'
           : 'Location: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">&copy; OpenStreetMap contributors</a>.'
     }</p>`;
+  if (focusKey) detailEl.querySelector(`[data-fk="${focusKey}"]`)?.focus({ preventScroll: true });
 }
 
 // ---------- Panel view switching ----------
@@ -659,8 +847,13 @@ let listScrollTop = 0;
 
 function showPanel() {
   const { tab, selectedId } = appState;
-  const place = selectedId && appState.places.find((p) => p.id === selectedId);
-  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === tab)));
+  const place = selectedId && placeById(selectedId);
+  document.querySelectorAll(".tab").forEach((t) => {
+    const on = t.dataset.tab === tab;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1; // roving tabindex: arrow keys move between tabs (bindTabKeys in ui.js)
+  });
+  $("panel-body").setAttribute("aria-labelledby", `tab-${tab}`);
   document.querySelectorAll(".tab-panel").forEach((panel) => {
     const name = panel.dataset.panel;
     panel.hidden = !(
@@ -674,28 +867,41 @@ function showPanel() {
 function setTab(tab) {
   if (appState.tab === "places" && !appState.selectedId) listScrollTop = $("panel-body").scrollTop;
   appState.tab = tab;
+  if (sheetState() === "map") setSheet("split"); // phones: a collapsed sheet opens for the tab you tapped
   showPanel();
   $("panel-body").scrollTop = tab === "places" && !appState.selectedId ? listScrollTop : 0;
 }
 
 function selectPlace(id, { fromMap = false } = {}) {
   if (!appState.selectedId && appState.tab === "places") listScrollTop = $("panel-body").scrollTop;
+  const previous = appState.selectedId;
   appState.selectedId = id;
   appState.tab = "places";
-  const place = appState.places.find((p) => p.id === id);
-  renderMapLayers();
+  const place = placeById(id);
+  // Only the two places whose state changed are restyled; the other layers stay as they are.
+  hoverId = null;
+  if (previous && previous !== id) emphasizePlace(previous, null);
+  emphasizePlace(id, "selected");
+  if (sheetState() === "map") setSheet("split"); // phones: a tap on the map must bring the detail into view
   showPanel();
   $("panel-body").scrollTop = 0;
+  syncUrl();
+  if (place) $("detail-title")?.focus({ preventScroll: true });
   if (place && !fromMap) zoomToPlace(place);
   else if (place && !map.getBounds().contains(place.point)) map.panTo(place.point);
 }
 
-function clearSelection() {
+// Back to the list. Focus returns to the row the detail was opened from, unless the caller says
+// the pointer is elsewhere (a click on empty map).
+function clearSelection({ refocus = true } = {}) {
+  const previous = appState.selectedId;
   appState.selectedId = null;
-  renderMapLayers();
+  if (previous) emphasizePlace(previous, null);
   renderList();
   showPanel();
   $("panel-body").scrollTop = listScrollTop;
+  syncUrl();
+  if (refocus && previous) document.querySelector(`.result[data-id="${CSS.escape(previous)}"]`)?.focus({ preventScroll: true });
 }
 
 function zoomToPlace(place) {
@@ -715,7 +921,7 @@ function refreshAll() {
   renderAlmanac();
   renderCalibers();
   renderArchery();
-  if (appState.selectedId && !appState.places.some((p) => p.id === appState.selectedId)) appState.selectedId = null;
+  if (appState.selectedId && !placeById(appState.selectedId)) appState.selectedId = null;
   showPanel();
   renderDisclaimerAgency();
 }
@@ -735,15 +941,39 @@ function renderDisclaimerAgency() {
 // ---------- Search ----------
 let searchToken = 0;
 let searchAbort = null;
+// A place to open as soon as it arrives: from a shared link (?p=) or a saved place. Places come
+// from live lookups, so "open this place" means run its search and select it when it turns up.
+let pendingPlaceId = null;
 
-async function runSearch(search, { fit = true, updateUrl = true } = {}) {
+function resolvePendingPlace() {
+  if (!pendingPlaceId) return;
+  const { loading } = appState;
+  const landsSettled = !loading.lands && !loading.stateLands;
+  const place = placeById(pendingPlaceId);
+  // Wait for both land sources: a PAD-US parcel can still be swapped for its agency twin, and a
+  // hand-checked place may be about to receive its real boundary.
+  if (place && landsSettled) {
+    const id = pendingPlaceId;
+    pendingPlaceId = null;
+    selectPlace(id);
+  } else if (landsSettled && !loading.osm) {
+    pendingPlaceId = null;
+    syncUrl();
+    showToast("That place isn't in these results any more.");
+  }
+}
+
+async function runSearch(search, { fit = true, updateUrl = true, placeId = null } = {}) {
   const token = ++searchToken;
   searchAbort?.abort();
   searchAbort = new AbortController();
   const { signal } = searchAbort;
 
   appState.search = { ...search }; // seasonsAvailable() reads this
+  pendingPlaceId = placeId;
+  rememberSearch(appState.search);
   $("map-prompt").hidden = true;
+  $("map-search-here").hidden = true;
   appState.selectedId = null;
   appState.places = curatedPlaces(search.center, search.radius);
   appState.shops = [];
@@ -796,6 +1026,7 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
       appState.loading.lands = false;
       renderMapLayers();
       renderList();
+      resolvePendingPlace();
     });
 
   // Official agency layers for every state in the area that has any (coverage.js). They merge only
@@ -814,6 +1045,7 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
     appState.loading.stateLands = false;
     renderMapLayers();
     renderList();
+    resolvePendingPlace();
   });
 
   fetchOsmFeatures(search.center, search.radius, signal)
@@ -842,6 +1074,7 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
       renderMapLayers();
       renderList();
       renderResources();
+      resolvePendingPlace();
     });
 }
 
@@ -849,6 +1082,7 @@ async function runSearch(search, { fit = true, updateUrl = true } = {}) {
 function clearSearch() {
   searchToken++; // any request still in flight is now stale and its results are ignored
   searchAbort?.abort();
+  pendingPlaceId = null;
   Object.assign(appState, {
     search: null,
     places: [],
@@ -866,10 +1100,11 @@ function clearSearch() {
   map.closePopup();
   searchLayer.clearLayers();
   $("map-prompt").hidden = false;
+  $("map-search-here").hidden = true;
   map.fitBounds(US_BOUNDS);
   try {
     const params = new URLSearchParams(location.search);
-    ["q", "lat", "lng", "st", "r"].forEach((k) => params.delete(k));
+    ["q", "lat", "lng", "st", "r", "p"].forEach((k) => params.delete(k));
     const rest = params.toString();
     history.replaceState(null, "", location.pathname + (rest ? `?${rest}` : ""));
   } catch {
@@ -893,11 +1128,19 @@ function writeUrl() {
   params.set("lng", center[1].toFixed(5));
   params.set("st", state);
   params.set("r", radius);
+  // The open place, so a copied link lands on it (see pendingPlaceId).
+  if (appState.selectedId) params.set("p", appState.selectedId);
+  else params.delete("p");
   try {
     history.replaceState(null, "", `${location.pathname}?${params}`);
   } catch {
     // Some browsers block history changes on file:// pages; the app still works without it.
   }
+}
+
+// Re-write the address bar after the selection changes. A no-op before the first search.
+function syncUrl() {
+  if (appState.search) writeUrl();
 }
 
 function readUrl() {
@@ -920,41 +1163,80 @@ let suggestAbort = null;
 function closeSuggestions() {
   suggestionsEl.hidden = true;
   searchInput.setAttribute("aria-expanded", "false");
+  searchInput.removeAttribute("aria-activedescendant");
   activeIndex = -1;
 }
 
+// One list serves both the geocoder's cities and the shortcuts shown before anything is typed
+// (quickSuggestions). `kind` says what choosing a row does; `group` starts a labelled section.
 function renderSuggestions(message) {
   if (message) {
-    suggestionsEl.innerHTML = `<li class="suggestion-msg">${escapeHtml(message)}</li>`;
+    suggestionsEl.innerHTML = `<li class="suggestion-msg" role="presentation">${escapeHtml(message)}</li>`;
   } else {
+    let group = null;
     suggestionsEl.innerHTML = suggestions
-      .map(
-        (s, i) => `<li role="option" id="sugg-${i}" class="suggestion ${i === activeIndex ? "active" : ""}" data-index="${i}" aria-selected="${i === activeIndex}">
-          <span class="s-name">${escapeHtml(s.label)}</span><span class="s-detail">${escapeHtml(s.detail)}</span></li>`
-      )
+      .map((s, i) => {
+        const heading = s.group && s.group !== group ? `<li class="suggestion-group" role="presentation">${escapeHtml(s.group)}</li>` : "";
+        group = s.group || null;
+        return `${heading}<li role="option" id="sugg-${i}" class="suggestion${s.kind === "locate" ? " is-action" : ""}${i === activeIndex ? " active" : ""}" data-index="${i}" aria-selected="${i === activeIndex}">
+          <span class="suggestion-icon" aria-hidden="true">${icon(s.icon || "pin", 17)}</span>
+          <span class="s-name">${escapeHtml(s.label)}</span><span class="s-detail">${escapeHtml(s.detail)}</span></li>`;
+      })
       .join("");
   }
   suggestionsEl.hidden = false;
   searchInput.setAttribute("aria-expanded", "true");
-  searchInput.setAttribute("aria-activedescendant", activeIndex >= 0 ? `sugg-${activeIndex}` : "");
+  if (activeIndex >= 0) searchInput.setAttribute("aria-activedescendant", `sugg-${activeIndex}`);
+  else searchInput.removeAttribute("aria-activedescendant");
+  // Keep the keyboard's row in view inside the list's own scroller.
+  const active = suggestionsEl.querySelector(".suggestion.active");
+  if (active) {
+    if (active.offsetTop < suggestionsEl.scrollTop) suggestionsEl.scrollTop = active.offsetTop;
+    else if (active.offsetTop + active.offsetHeight > suggestionsEl.scrollTop + suggestionsEl.clientHeight)
+      suggestionsEl.scrollTop = active.offsetTop + active.offsetHeight - suggestionsEl.clientHeight;
+  }
+}
+
+// Offered when the box is focused and empty: your location, then where you have been.
+function quickSuggestions() {
+  const items = [{ kind: "locate", icon: "locate", label: "Use my location", detail: "Search public land around you" }];
+  for (const search of recentSearches())
+    items.push({ kind: "recent", icon: "clock", group: "Recent searches", label: search.label, detail: `${search.radius}-mile search`, search });
+  for (const saved of savedPlaces().slice(0, 5))
+    items.push({ kind: "saved", icon: "star", group: "Saved places", label: saved.name, detail: [saved.typeLabel, `near ${saved.search.label}`].filter(Boolean).join(" · "), saved });
+  return items;
+}
+
+function openQuickSuggestions() {
+  suggestions = quickSuggestions();
+  activeIndex = -1; // nothing preselected, so Enter on an empty box does nothing by surprise
+  renderSuggestions();
 }
 
 function chooseSuggestion(s) {
   closeSuggestions();
   searchInput.blur();
+  if (s.kind === "locate") return locateAndSearch();
+  if (s.kind === "saved") return openSavedPlace(s.saved);
+  if (s.kind === "recent") return runSearch({ ...s.search });
   runSearch({ label: s.label, center: s.center, state: s.state, radius: +$("radius-select").value });
 }
 
+searchInput.addEventListener("focus", () => {
+  if (!searchInput.value.trim()) openQuickSuggestions();
+});
+
 searchInput.addEventListener("input", () => {
   clearTimeout(suggestTimer);
+  suggestAbort?.abort();
   const text = searchInput.value.trim();
   if (text.length < 3) {
     suggestions = [];
-    closeSuggestions();
+    if (text) closeSuggestions();
+    else openQuickSuggestions();
     return;
   }
   suggestTimer = setTimeout(async () => {
-    suggestAbort?.abort();
     suggestAbort = new AbortController();
     try {
       suggestions = await geocodeCities(text, suggestAbort.signal);
@@ -967,10 +1249,17 @@ searchInput.addEventListener("input", () => {
 });
 
 searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" && suggestionsEl.hidden && !searchInput.value.trim()) {
+    e.preventDefault();
+    openQuickSuggestions();
+    activeIndex = 0;
+    return renderSuggestions();
+  }
   if (suggestionsEl.hidden || !suggestions.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
-    activeIndex = (activeIndex + (e.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length;
+    const n = suggestions.length;
+    activeIndex = e.key === "ArrowDown" ? (activeIndex + 1) % n : (activeIndex <= 0 ? n : activeIndex) - 1;
     renderSuggestions();
   } else if (e.key === "Escape") {
     closeSuggestions();
@@ -978,13 +1267,66 @@ searchInput.addEventListener("keydown", (e) => {
 });
 
 suggestionsEl.addEventListener("mousedown", (e) => {
+  e.preventDefault(); // keep focus in the box, so a click on the list's padding doesn't close it
   const li = e.target.closest("[data-index]");
-  if (!li) return;
-  e.preventDefault(); // keep focus so the click lands
-  chooseSuggestion(suggestions[+li.dataset.index]);
+  if (li) chooseSuggestion(suggestions[+li.dataset.index]);
 });
 
 searchInput.addEventListener("blur", () => setTimeout(closeSuggestions, 150));
+
+// ---------- Ways into a search other than typing ----------
+// "Use my location": the browser's position, placed in a state the same way a map click is.
+let locating = false;
+async function locateAndSearch() {
+  if (locating) return;
+  if (!navigator.geolocation) return showToast("This browser can't share its location. Search a city instead.");
+  const btn = $("locate-btn");
+  const label = btn.lastElementChild;
+  locating = true;
+  btn.disabled = true;
+  label.textContent = "Finding you…";
+  const done = () => {
+    locating = false;
+    btn.disabled = false;
+    label.textContent = "Use my location";
+  };
+  let position;
+  try {
+    position = await new Promise((resolve, reject) =>
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 })
+    );
+  } catch (err) {
+    done();
+    return showToast(err.code === 1 ? "Location access was declined. Search a city instead." : "Couldn't get your location. Search a city instead.");
+  }
+  const search = await searchAtPoint({ lat: position.coords.latitude, lng: position.coords.longitude }).catch(() => null);
+  done();
+  if (!search) return showToast("Your location doesn't appear to be in a U.S. state.");
+  runSearch(search);
+}
+
+// Open a saved place: straight away when it is in the current results, otherwise by re-running
+// the search it was saved from and selecting it once it arrives.
+function openSavedPlace(saved) {
+  const { search } = appState;
+  const sameSearch = search && search.radius === saved.search.radius && milesBetween(search.center, saved.search.center) < 0.05;
+  if (sameSearch && placeById(saved.id)) return selectPlace(saved.id);
+  runSearch({ ...saved.search }, { placeId: saved.id });
+}
+
+// Copy (or, on a phone, share) the current address, which carries the search and any open place.
+async function shareCurrentLink(title) {
+  syncUrl();
+  const url = location.href;
+  if (navigator.share && window.matchMedia("(pointer: coarse)").matches) {
+    try {
+      return await navigator.share({ title, url });
+    } catch (err) {
+      if (err.name === "AbortError") return; // the share sheet was dismissed
+    }
+  }
+  showToast((await copyText(url)) ? "Link copied" : "Couldn't copy the link. Copy it from the address bar.");
+}
 
 $("search-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1023,10 +1365,19 @@ document.querySelectorAll('input[name="activity"]').forEach((input) =>
   })
 );
 
+// The list answers every keystroke; the map's layers are rebuilt once typing pauses, because a
+// rebuild re-creates every polygon in the search.
+let filterTimer = null;
 $("list-filter").addEventListener("input", (e) => {
   appState.filterText = e.target.value;
-  renderMapLayers();
   renderList();
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(renderMapLayers, 140);
+});
+
+$("list-sort").addEventListener("change", (e) => {
+  appState.sort = e.target.value;
+  renderList(); // order only: what is on the map does not change
 });
 
 $("show-unconfirmed").addEventListener("change", (e) => {
@@ -1060,6 +1411,15 @@ document.querySelectorAll(".game-select").forEach((sel) => {
 });
 
 document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setTab(tab.dataset.tab)));
+bindTabKeys(document.querySelector(".tabs"), ".tab", (tab) => setTab(tab.dataset.tab));
+
+// A list row under the pointer, or holding keyboard focus, lights up its place on the map.
+const resultsEl = $("results-list");
+const rowId = (target) => target?.closest?.(".result[data-id]")?.dataset.id || null;
+resultsEl.addEventListener("mouseover", (e) => setHoverPlace(rowId(e.target)));
+resultsEl.addEventListener("mouseleave", () => setHoverPlace(null));
+resultsEl.addEventListener("focusin", (e) => setHoverPlace(rowId(e.target)));
+resultsEl.addEventListener("focusout", () => setHoverPlace(null));
 
 document.addEventListener("click", (e) => {
   const t = e.target;
@@ -1068,9 +1428,41 @@ document.addEventListener("click", (e) => {
   if (t.closest("[data-back]")) return clearSelection();
   const zoom = t.closest("[data-zoom]");
   if (zoom) {
-    const place = appState.places.find((p) => p.id === zoom.dataset.zoom);
+    const place = placeById(zoom.dataset.zoom);
     if (place) zoomToPlace(place);
     return;
+  }
+  const save = t.closest("[data-save]");
+  if (save) {
+    const place = placeById(save.dataset.save);
+    if (!place) return;
+    const saved = toggleSavedPlace(place, appState.search);
+    renderDetail(place); // refreshes the button; focus stays on it (data-fk)
+    return showToast(saved ? "Saved. Find it under the search box, or on the start screen." : "Removed from saved places");
+  }
+  if (t.closest("[data-share-place]")) {
+    const place = placeById(appState.selectedId);
+    return place && shareCurrentLink(place.name);
+  }
+  const coords = t.closest("[data-copy-coords]");
+  if (coords) return copyText(coords.dataset.copyCoords).then((ok) => showToast(ok ? `Copied ${coords.dataset.copyCoords}` : "Couldn't copy the coordinates"));
+  if (t.closest("[data-reset-filters]")) return resetFilters();
+  const recent = t.closest("[data-recent]");
+  if (recent) {
+    const search = recentSearches()[+recent.dataset.recent];
+    return search && runSearch({ ...search });
+  }
+  const example = t.closest("[data-example]");
+  if (example) return runSearch({ ...EXAMPLE_SEARCHES[+example.dataset.example], radius: +$("radius-select").value });
+  const savedBtn = t.closest("[data-saved]");
+  if (savedBtn) {
+    const saved = savedPlaces().find((p) => p.id === savedBtn.dataset.saved);
+    return saved && openSavedPlace(saved);
+  }
+  const unsave = t.closest("[data-unsave]");
+  if (unsave) {
+    removeSavedPlace(unsave.dataset.unsave);
+    return renderWelcome();
   }
   const calBtn = t.closest("[data-cal-scope]");
   if (calBtn) {
@@ -1085,17 +1477,59 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// "Search for a city" buttons (map prompt and empty list) send you to the real search box.
+// "Search a city" buttons send you to the real search box.
 document.addEventListener("click", (e) => {
-  if (!e.target.closest("[data-focus-search]")) return;
-  const input = $("city-search");
-  input.scrollIntoView({ block: "center", behavior: "smooth" });
-  input.focus();
+  if (e.target.closest("[data-focus-search]")) $("city-search").focus();
+});
+
+$("locate-btn").addEventListener("click", locateAndSearch);
+$("recent-clear").addEventListener("click", () => {
+  clearRecentSearches();
+  renderWelcome();
+});
+$("area-share").addEventListener("click", () => appState.search && shareCurrentLink(`Public land near ${appState.search.label}`));
+$("area-now").addEventListener("click", () => setView("almanac"));
+
+// "/" jumps to the search box from anywhere that isn't already a text field.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (document.body.classList.contains("on-draws")) return; // the search box is hidden on the Draws tab
+  e.preventDefault();
+  searchInput.focus();
+  searchInput.select();
+});
+
+// The skip link lands on whichever view is showing; on the map view, on the panel's content.
+$("skip-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  const view = document.querySelector(".view:not([hidden])");
+  (view?.id === "app" ? $("panel-body") : view)?.focus();
 });
 
 // Click on empty map closes the detail view.
 map.on("click", () => {
-  if (appState.selectedId) clearSelection();
+  if (appState.selectedId) clearSelection({ refocus: false });
+});
+
+// "Search this area": offered once the map has been dragged well away from the current search.
+function updateSearchHere() {
+  const { search } = appState;
+  const c = map.getCenter();
+  $("map-search-here").hidden = !search || milesBetween(search.center, [c.lat, c.lng]) < search.radius * 0.6;
+}
+map.on("dragend", updateSearchHere);
+$("map-search-here").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const label = btn.lastElementChild;
+  btn.disabled = true;
+  label.textContent = "Searching…";
+  const search = await searchAtPoint(map.getCenter()).catch(() => null);
+  btn.disabled = false;
+  label.textContent = "Search this area";
+  if (!search) return showToast("That spot isn't in a U.S. state. Try a spot on land in the U.S.");
+  runSearch(search);
 });
 
 // Re-centre the search on a map point, keeping the current radius. The state comes from the Census
@@ -1123,14 +1557,15 @@ map.on("contextmenu", (e) => {
   const lat = e.latlng.lat.toFixed(5);
   const lng = e.latlng.lng.toFixed(5);
   const box = document.createElement("div");
-  box.style.cssText = "display:grid;gap:6px;min-width:150px";
+  box.className = "map-menu";
 
   const here = document.createElement("button");
   here.type = "button";
   here.className = "btn-primary small";
   here.textContent = "Search this location";
   const note = document.createElement("div");
-  note.style.cssText = "font-size:0.78rem;color:#9a3412;min-height:0";
+  note.className = "map-menu-note";
+  note.setAttribute("role", "status");
   here.addEventListener("click", async () => {
     here.disabled = true;
     here.textContent = "Searching…";
@@ -1150,19 +1585,54 @@ map.on("contextmenu", (e) => {
   link.target = "_blank";
   link.rel = "noopener";
   link.textContent = "Open in Google Maps";
-  link.style.fontWeight = "700";
   const coords = document.createElement("div");
+  coords.className = "map-menu-coords";
   coords.textContent = `${lat}, ${lng}`;
-  coords.style.cssText = "font-size:0.8rem;opacity:0.75";
   box.append(here, link, coords, note);
   L.popup({ closeButton: false }).setLatLng(e.latlng).setContent(box).openOn(map);
 });
 
-// Phone layout: let the map take most of the screen.
-$("map-toggle").addEventListener("click", () => {
-  const expanded = $("app").classList.toggle("map-expanded");
-  $("map-toggle").setAttribute("aria-pressed", String(expanded));
-  $("map-toggle").textContent = expanded ? "Show list" : "Expand map";
+// ---------- Phone layout: the panel is a sheet under the map ----------
+// Three heights, held in data-sheet on #app and laid out in CSS: "map" (the sheet is down to its
+// tab strip), "split" (the default) and "list" (the sheet takes most of the screen). The handle on
+// the sheet's top edge steps between them with a swipe or a tap; the button on the map toggles
+// map / split. None of it applies on desktop, where the handle and button are hidden.
+const SHEET_STATES = ["map", "split", "list"];
+
+function sheetState() {
+  return $("app").dataset.sheet || "split";
+}
+
+function setSheet(state) {
+  $("app").dataset.sheet = state;
+  $("map-toggle").setAttribute("aria-pressed", String(state === "map"));
+  $("map-toggle").textContent = state === "map" ? "Show list" : state === "list" ? "Show map" : "Expand map";
+}
+
+// From either extreme the button returns to the split; from the split it gives the map the screen.
+$("map-toggle").addEventListener("click", () => setSheet(sheetState() === "split" ? "map" : "split"));
+
+const sheetHandle = $("sheet-handle");
+let sheetDragY = null;
+let sheetDragged = false;
+sheetHandle.addEventListener("pointerdown", (e) => {
+  sheetDragY = e.clientY;
+  sheetDragged = false;
+  sheetHandle.setPointerCapture(e.pointerId);
+});
+sheetHandle.addEventListener("pointerup", (e) => {
+  if (sheetDragY == null) return;
+  const dy = e.clientY - sheetDragY;
+  sheetDragY = null;
+  if (Math.abs(dy) < 12) return; // a tap: the click handler below takes it
+  sheetDragged = true;
+  const at = SHEET_STATES.indexOf(sheetState());
+  setSheet(SHEET_STATES[Math.min(SHEET_STATES.length - 1, Math.max(0, at + (dy < 0 ? 1 : -1)))]);
+});
+sheetHandle.addEventListener("pointercancel", () => (sheetDragY = null));
+sheetHandle.addEventListener("click", () => {
+  if (sheetDragged) return void (sheetDragged = false); // the swipe already moved it
+  setSheet(sheetState() === "split" ? "list" : "split");
 });
 
 // The disclaimer's full text shows on hover and keyboard focus through CSS; the click toggle is
@@ -1272,5 +1742,6 @@ initAlmanac();
 initCalibers();
 initArchery();
 const initialSearch = readUrl();
-if (initialSearch) runSearch(initialSearch, { updateUrl: false });
+// ?p= names a place to open once the search has loaded it (a shared link).
+if (initialSearch) runSearch(initialSearch, { updateUrl: false, placeId: new URLSearchParams(location.search).get("p") });
 else refreshAll();

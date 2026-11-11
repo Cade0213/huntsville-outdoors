@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A simplified cut of the masthead crest: gold rim, dawn sky, two ridgelines, a lake. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bcd3d6"/><stop offset="0.6" stop-color="#f8e6c2"/><stop offset="1" stop-color="#f3b27d"/></linearGradient>
+    <clipPath id="c"><circle cx="32" cy="32" r="24"/></clipPath>
+  </defs>
+  <circle cx="32" cy="32" r="31" fill="#c9973f"/>
+  <circle cx="32" cy="32" r="27.5" fill="#1f3325"/>
+  <g clip-path="url(#c)">
+    <rect x="8" y="8" width="48" height="48" fill="url(#sky)"/>
+    <circle cx="32" cy="36" r="9" fill="#ffe2a6"/>
+    <path d="M8 40l8-8 6 5 7-9 7 7 6-8 6 7 8-4v26H8z" fill="#a6bbb0"/>
+    <path d="M8 48l11-16 6 8 10-16 11 18 7-5 3 3v16H8z" fill="#3f6b4b"/>
+    <path d="M35 24l-4.500 7 3-1.500 1.500 2.200 2-2.200 2.800 1.500z" fill="#fbfdfb"/>
+    <rect x="8" y="50" width="48" height="8" fill="#2d6f9e"/>
+  </g>
+  <circle cx="32" cy="32" r="24" fill="none" stroke="#e9cd85" stroke-width="1.500"/>
+</svg>
