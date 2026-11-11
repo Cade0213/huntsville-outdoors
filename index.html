@@ -150,13 +150,20 @@
     </button>
   </nav>
   <div class="disclaimer" role="note" id="disclaimer">
-    <p class="disclaimer-text">
-      <strong>⚠️ Unofficial source.</strong>
+    <button type="button" class="disclaimer-toggle" id="disclaimer-toggle" aria-expanded="false" aria-describedby="disclaimer-text">
+      <span aria-hidden="true">⚠️</span>
+      <strong>Unofficial source</strong>
+      <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+        <circle cx="12" cy="7.8" r="1.25" fill="currentColor"/>
+        <path d="M12 11v6.2" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <p class="disclaimer-text" id="disclaimer-text" role="tooltip">
       This is not an official source. Always verify current seasons, permits, regulations, and access with the
       <a id="disclaimer-agency" target="_blank" rel="noopener">state wildlife agency</a>
       and the managing agency. Regulations change.
     </p>
-    <button type="button" class="disclaimer-toggle" id="disclaimer-toggle" aria-expanded="false">More</button>
   </div>
   </div>
 
@@ -295,6 +302,7 @@
         <li><span class="key-pin hunting"></span>Hunting land</li>
         <li><span class="key-pin fishing"></span>Fishing access</li>
         <li><span class="key-area"></span>Public land boundary</li>
+        <li id="mvum-key" hidden><span class="key-road"></span><span id="mvum-key-text"></span></li>
       </ul>
       <button type="button" class="map-toggle" id="map-toggle" aria-pressed="false">Expand map</button>
     </main>

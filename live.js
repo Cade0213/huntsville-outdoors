@@ -4,7 +4,12 @@
 //   Public lands     USGS Protected Areas Database (PAD-US) – Public Access layer
 //   State lines      U.S. Census TIGERweb – used to show the right state agencies for each result
 //   Fishing & shops  OpenStreetMap via the Overpass API (community mirrors; best-effort)
-//   Weather          NOAA / National Weather Service api.weather.gov (official, U.S. only)
+//   Weather          NOAA / National Weather Service api.weather.gov (official, U.S. only), incl. active alerts
+//   Refuge detail    U.S. Fish & Wildlife Service – hunting and fishing opportunities by station (coverage.js)
+//   Water            USGS Water Services – current streamflow, gauge height and water temperature
+//   Tides            NOAA CO-OPS (tidesandcurrents.noaa.gov) – high/low tide predictions
+//   Wildfires        National Interagency Fire Center – WFIGS current interagency fire perimeters
+//   Forest roads     U.S. Forest Service – Motor Vehicle Use Map roads and trails (optional map overlay)
 //
 // PAD-US says a parcel is public and whether access is open or restricted. It does NOT say whether
 // hunting or fishing is allowed, so everything from here is labeled "unconfirmed" in the UI.
@@ -15,6 +20,12 @@ const ENDPOINTS = {
   padus: "https://services.arcgis.com/v01gqwM5QqNysAAi/arcgis/rest/services/PADUS_Public_Access/FeatureServer/0/query",
   tigerStates: "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0/query",
   nws: "https://api.weather.gov/points/",
+  nwsAlerts: "https://api.weather.gov/alerts/active",
+  usgsIv: "https://waterservices.usgs.gov/nwis/iv/",
+  coopsStations: "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json",
+  coopsData: "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter",
+  usfsMvum: "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_MVUM_01/MapServer",
+  nifcFires: "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_Current/FeatureServer/0",
   overpass: [
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
@@ -456,11 +467,11 @@ async function fetchPublicLands(center, radiusMi, signal) {
 // One ArcGIS layer query, paged until complete. ArcGIS flags a truncated page with
 // `exceededTransferLimit` at the top level for f=json but under `properties` for f=geojson, so both
 // are checked; missing that once silently cut a statewide load to exactly 1,000 rows.
-async function arcgisQueryAll(layerUrl, params, signal) {
+async function arcgisQueryAll(layerUrl, params, signal, oidField = "OBJECTID") {
   const features = [];
   const requests = [];
   for (let offset = 0; ; ) {
-    const url = `${layerUrl}/query?${queryString({ ...params, orderByFields: "OBJECTID", resultOffset: offset, f: "geojson" })}`;
+    const url = `${layerUrl}/query?${queryString({ ...params, orderByFields: oidField, resultOffset: offset, f: "geojson" })}`;
     requests.push(url);
     const data = await fetchJson(url, { signal, timeoutMs: 30000 });
     if (data.error) throw new Error(data.error.message || "ArcGIS error");
@@ -497,14 +508,37 @@ async function fetchStateLayer(stateAbbrev, agency, layer, center, radiusMi, sig
   const { features, requests } = await arcgisQueryAll(
     layer.url,
     {
-      where: "1=1",
+      where: layer.where || "1=1",
       outFields: layer.outFields,
       returnGeometry: true,
       ...(layer.geometry === "polygon" ? { maxAllowableOffset: geometryOffset(radiusMi), geometryPrecision: 5 } : {}),
       ...spatial,
     },
-    signal
+    signal,
+    layer.oidField // paging sorts on the layer's id column, which is not always called OBJECTID
   );
+  // Optional per-record detail from a second layer of the same agency, joined on a shared code.
+  const details = new Map();
+  if (layer.detailLayer) {
+    const dl = layer.detailLayer;
+    const codes = [...new Set(features.map((f) => dl.from(f.properties)).filter((c) => Number.isFinite(c) || (typeof c === "string" && c)))];
+    if (codes.length) {
+      // Numeric codes go in bare; names are quoted, with any apostrophe doubled.
+      const sqlValue = (c) => (typeof c === "number" ? c : `'${c.replace(/'/g, "''")}'`);
+      const res = await arcgisQueryAll(
+        dl.url,
+        { where: `${dl.keyField} IN (${codes.map(sqlValue).join(",")})`, outFields: dl.outFields, returnGeometry: false },
+        signal,
+        dl.oidField
+      );
+      res.features.forEach((f) => details.set(f.properties[dl.keyField], f.properties));
+      requests.push(...res.requests);
+      // A code with no match means the two layers have drifted apart; say so rather than
+      // quietly showing the place without its detail.
+      const missing = codes.filter((c) => !details.has(c));
+      if (missing.length) console.warn(`${layer.id}: no ${dl.name} record for ${dl.keyField} ${missing.join(", ")}`);
+    }
+  }
   const retrievedAt = new Date().toISOString();
 
   // A WMA or BMA can come back as several polygons; group them into one place like PAD-US parcels.
@@ -512,14 +546,16 @@ async function fetchStateLayer(stateAbbrev, agency, layer, center, radiusMi, sig
   for (const f of features) {
     if (!f.geometry) continue;
     const key = String(layer.groupBy(f.properties));
-    const g = groups.get(key) || { attrs: f.properties, polygons: [], point: null };
+    const g = groups.get(key) || { attrs: f.properties, records: [], polygons: [], point: null };
+    g.records.push(f.properties);
     if (layer.geometry === "polygon") g.polygons.push(...geometryToPolygons(f.geometry));
     else if (!g.point) g.point = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
     groups.set(key, g);
   }
 
   return [...groups.entries()].map(([key, g]) => {
-    const p = layer.toPlace(g.attrs, { closed: closedKeys.has(key) });
+    const detail = layer.detailLayer ? details.get(layer.detailLayer.from(g.attrs)) : undefined;
+    const p = layer.toPlace(g.attrs, { closed: closedKeys.has(key), detail, records: g.records });
     const polygons = g.polygons.length ? g.polygons : null;
     const point = polygons ? markerPointFor(polygons) : g.point;
     return {
@@ -534,6 +570,7 @@ async function fetchStateLayer(stateAbbrev, agency, layer, center, radiusMi, sig
       point,
       acres: p.acres ? Math.round(p.acres) : undefined,
       facts: (p.facts || []).filter(Boolean),
+      extraLinks: (p.extraLinks || []).filter(Boolean),
       distanceMi: polygons ? milesToPolygons(center, polygons) : milesBetween(center, point),
       provenance: { agency, layerName: layer.name, layerUrl: layer.url, requests, retrievedAt },
     };
@@ -709,9 +746,10 @@ async function fetchWeather(center, signal) {
   const props = point.properties || {};
   if (!props.forecast) throw new Error("No NWS forecast grid for this point");
 
-  const [hourly, daily] = await Promise.allSettled([
+  const [hourly, daily, active] = await Promise.allSettled([
     fetchJson(props.forecastHourly, { signal, timeoutMs: 12000 }),
     fetchJson(props.forecast, { signal, timeoutMs: 12000 }),
+    fetchJson(`${ENDPOINTS.nwsAlerts}?point=${lat.toFixed(4)},${lng.toFixed(4)}`, { signal, timeoutMs: 12000 }),
   ]);
   const hourlyPeriods = hourly.status === "fulfilled" ? hourly.value.properties?.periods || [] : [];
   const dailyPeriods = daily.status === "fulfilled" ? daily.value.properties?.periods || [] : [];
@@ -723,6 +761,247 @@ async function fetchWeather(center, signal) {
       : null,
     now: hourlyPeriods[0] || null,
     periods: dailyPeriods.slice(0, 4),
+    // null (not []) when the alerts call failed, so the UI never reads a failure as "no alerts".
+    alerts:
+      active.status === "fulfilled"
+        ? (active.value.features || []).map((f) => ({
+            event: f.properties.event,
+            severity: f.properties.severity,
+            headline: f.properties.headline,
+            ends: f.properties.ends || f.properties.expires || null,
+          }))
+        : null,
     forecastUrl: `https://forecast.weather.gov/MapClick.php?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}`,
+  };
+}
+
+// ---------------- Water conditions (USGS) and tides (NOAA CO-OPS) ----------------
+// Both are official, free, keyless and CORS-open. The two halves settle independently, and each
+// comes back as { ok, ... } so a failed service is reported as unavailable instead of as "none".
+
+const WATER_RADIUS_MI = 25;
+const WATER_MAX_GAUGES = 8;
+const TIDE_RADIUS_MI = 30;
+// USGS parameter codes: discharge, gauge height, water temperature (°C).
+const USGS_PARAMS = { "00060": "flow", "00065": "height", "00010": "tempC" };
+
+async function fetchGauges(center, signal) {
+  const [lat, lng] = center;
+  const dLat = WATER_RADIUS_MI / 69;
+  const dLng = WATER_RADIUS_MI / (69 * Math.cos((lat * Math.PI) / 180));
+  const url = `${ENDPOINTS.usgsIv}?${queryString({
+    format: "json",
+    bBox: [lng - dLng, lat - dLat, lng + dLng, lat + dLat].map((n) => n.toFixed(4)).join(","),
+    parameterCd: Object.keys(USGS_PARAMS).join(","),
+    siteStatus: "active",
+    // Streams and lakes only; without this, groundwater wells show up reporting "water temperature".
+    siteType: "ST,LK",
+  })}`;
+  const data = await fetchJson(url, { signal, timeoutMs: 20000 });
+
+  const sites = new Map();
+  for (const ts of data.value?.timeSeries || []) {
+    const info = ts.sourceInfo || {};
+    const code = info.siteCode?.[0]?.value;
+    const geo = info.geoLocation?.geogLocation;
+    const field = USGS_PARAMS[ts.variable?.variableCode?.[0]?.value];
+    const reading = ts.values?.[0]?.value?.[0];
+    const value = reading ? Number(reading.value) : NaN;
+    if (!code || !geo || !field || !Number.isFinite(value) || value === ts.variable.noDataValue) continue;
+    const point = [geo.latitude, geo.longitude];
+    const site = sites.get(code) || {
+      id: code,
+      name: info.siteName || code, // as USGS publishes it
+      point,
+      distanceMi: milesBetween(center, point),
+      url: `https://waterdata.usgs.gov/monitoring-location/USGS-${code}/`,
+      readAt: reading.dateTime,
+    };
+    site[field] = value;
+    if (reading.dateTime > site.readAt) site.readAt = reading.dateTime;
+    sites.set(code, site);
+  }
+  const all = [...sites.values()].filter((g) => g.distanceMi <= WATER_RADIUS_MI).sort((a, b) => a.distanceMi - b.distanceMi);
+  return { gauges: all.slice(0, WATER_MAX_GAUGES), total: all.length, request: url };
+}
+
+// The CO-OPS station list is one ~3,500-row file; fetch it once per page load.
+let tideStationsPromise = null;
+function tideStations(signal) {
+  if (!tideStationsPromise) {
+    tideStationsPromise = fetchJson(`${ENDPOINTS.coopsStations}?type=tidepredictions`, { signal, timeoutMs: 20000 })
+      .then((d) => d.stations || [])
+      .catch((err) => {
+        tideStationsPromise = null; // let the next search try again
+        throw err;
+      });
+  }
+  return tideStationsPromise;
+}
+
+// High/low predictions for the nearest tide station, or `station: null` when none is within range.
+async function fetchTides(center, signal) {
+  const stations = await tideStations(signal);
+  let nearest = null;
+  for (const st of stations) {
+    const d = milesBetween(center, [st.lat, st.lng]);
+    if (d <= TIDE_RADIUS_MI && (!nearest || d < nearest.distanceMi)) nearest = { id: st.id, name: st.name, state: st.state, distanceMi: d };
+  }
+  if (!nearest) return { station: null, predictions: [] };
+
+  const now = new Date();
+  const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const url = `${ENDPOINTS.coopsData}?${queryString({
+    product: "predictions",
+    station: nearest.id,
+    begin_date: ymd,
+    range: 48,
+    datum: "MLLW",
+    interval: "hilo",
+    units: "english",
+    time_zone: "lst_ldt", // the station's own clock time
+    format: "json",
+    application: "public-lands-finder",
+  })}`;
+  const data = await fetchJson(url, { signal, timeoutMs: 15000 });
+  if (data.error) throw new Error(data.error.message || "CO-OPS error");
+  return {
+    station: { ...nearest, url: `https://tidesandcurrents.noaa.gov/noaatidepredictions.html?id=${nearest.id}` },
+    predictions: (data.predictions || []).map((p) => ({ time: p.t, feet: Number(p.v), high: p.type === "H" })),
+    request: url,
+  };
+}
+
+async function fetchWaterConditions(center, signal) {
+  const [gauges, tides] = await Promise.allSettled([fetchGauges(center, signal), fetchTides(center, signal)]);
+  const settle = (r) => (r.status === "fulfilled" ? { ok: true, ...r.value } : { ok: false, error: r.reason?.name === "TimeoutError" ? "timed out" : r.reason?.message });
+  return { gauges: settle(gauges), tides: settle(tides), retrievedAt: new Date().toISOString() };
+}
+
+// ---------------- Wildfires (National Interagency Fire Center) ----------------
+// Current WFIGS perimeters that reach within `radiusMi`. Fully contained fires can still be in
+// the layer, so callers should show percent contained.
+async function fetchWildfires(center, radiusMi, signal) {
+  const { features, requests } = await arcgisQueryAll(
+    ENDPOINTS.nifcFires,
+    {
+      where: "1=1",
+      geometry: `${center[1]},${center[0]}`,
+      geometryType: "esriGeometryPoint",
+      inSR: 4326,
+      distance: radiusMi,
+      units: "esriSRUnit_StatuteMile",
+      spatialRel: "esriSpatialRelIntersects",
+      outFields: "poly_IncidentName,attr_IncidentSize,attr_PercentContained,poly_DateCurrent",
+      returnGeometry: false,
+    },
+    signal
+  );
+  const fires = features
+    .map((f) => ({
+      name: titleCase(cleanText(f.properties.poly_IncidentName) || "Unnamed fire"),
+      acres: f.properties.attr_IncidentSize,
+      contained: f.properties.attr_PercentContained,
+      updated: f.properties.poly_DateCurrent,
+    }))
+    .sort((a, b) => (b.acres || 0) - (a.acres || 0));
+  return { fires, requests, retrievedAt: new Date().toISOString() };
+}
+
+// ---------------- Forest roads and trails (U.S. Forest Service Motor Vehicle Use Map) ----------------
+// The roads and trails each national forest has designated for motor vehicles (36 CFR 212.56).
+// The map overlay is the Service's own rendering, requested one screen at a time as an image, so
+// the page never downloads road geometry. A click looks up the route under the pointer.
+
+// The Service only draws its MVUM symbology closer in than 1:300,000, which is zoom 11 here.
+const MVUM_MIN_ZOOM = 11;
+const MVUM_LAYERS = { 1: "Road", 2: "Trail" };
+
+// `min`/`max` are Web Mercator corners; `size` is the map's pixel size, so the image fits exactly.
+function mvumImageUrl(min, max, size) {
+  return `${ENDPOINTS.usfsMvum}/export?${queryString({
+    bbox: [min.x, min.y, max.x, max.y].join(","),
+    bboxSR: 3857,
+    imageSR: 3857,
+    size: `${size.x},${size.y}`,
+    layers: `show:${Object.keys(MVUM_LAYERS).join(",")}`,
+    transparent: true,
+    format: "png32",
+    f: "image",
+  })}`;
+}
+
+// The vehicle classes the MVUM gives its own open/closed column and dates for.
+const MVUM_VEHICLES = [
+  ["passengervehicle", "passenger vehicles"],
+  ["highclearancevehicle", "high-clearance vehicles"],
+  ["truck", "trucks"],
+  ["bus", "buses"],
+  ["motorhome", "motorhomes"],
+  ["fourwd_gt50inches", "4WD over 50 in. wide"],
+  ["twowd_gt50inches", "2WD over 50 in. wide"],
+  ["tracked_ohv_gt50inches", "tracked OHVs over 50 in."],
+  ["other_ohv_gt50inches", "other OHVs over 50 in."],
+  ["atv", "ATVs"],
+  ["motorcycle", "motorcycles"],
+  ["otherwheeled_ohv", "other wheeled OHVs"],
+  ["tracked_ohv_lt50inches", "tracked OHVs under 50 in."],
+  ["other_ohv_lt50inches", "other OHVs under 50 in."],
+];
+
+// The designated route within `meters` of a point, or null. Only classes the Service marks "open"
+// are listed, each with the dates it publishes; nothing is worked out from them.
+async function fetchMvumRoute(latlng, meters, signal) {
+  const outFields = [
+    "id", "name", "mvum_symbol_name", "seasonal", "forestname", "districtname", "surfacetype", "operationalmaintlevel",
+    ...MVUM_VEHICLES.flatMap(([f]) => [f, `${f.replace("inches", "")}_datesopen`]),
+  ];
+  const hits = await Promise.all(
+    Object.keys(MVUM_LAYERS).map(async (layerId) => {
+      // Trails carry no surface or maintenance-level columns.
+      const fields = layerId === "1" ? outFields : outFields.filter((f) => f !== "surfacetype" && f !== "operationalmaintlevel");
+      const url = `${ENDPOINTS.usfsMvum}/${layerId}/query?${queryString({
+        where: "1=1",
+        geometry: `${latlng.lng},${latlng.lat}`,
+        geometryType: "esriGeometryPoint",
+        inSR: 4326,
+        distance: Math.max(1, Math.round(meters)),
+        units: "esriSRUnit_Meter",
+        spatialRel: "esriSpatialRelIntersects",
+        outFields: fields.join(","),
+        returnGeometry: false,
+        resultRecordCount: 1,
+        f: "json",
+      })}`;
+      const data = await fetchJson(url, { signal, timeoutMs: 15000 });
+      if (data.error) throw new Error(data.error.message || "ArcGIS error");
+      const a = data.features?.[0]?.attributes;
+      return a ? { a, kind: MVUM_LAYERS[layerId], request: url } : null;
+    })
+  );
+  const hit = hits.find(Boolean);
+  if (!hit) return null;
+  const { a } = hit;
+
+  // Classes that share the same dates are listed together.
+  const byDates = new Map();
+  for (const [field, label] of MVUM_VEHICLES) {
+    if (a[field] !== "open") continue;
+    const dates = cleanText(a[`${field.replace("inches", "")}_datesopen`]) || "dates not given";
+    byDates.set(dates, [...(byDates.get(dates) || []), label]);
+  }
+  const afterCode = (v) => cleanText(v).replace(/^[A-Z0-9]+ - /, ""); // "NAT - NATIVE MATERIAL" -> "NATIVE MATERIAL"
+  return {
+    kind: hit.kind,
+    number: cleanText(a.id),
+    name: cleanText(a.name),
+    designation: cleanText(a.mvum_symbol_name),
+    forest: cleanText(a.forestname),
+    district: cleanText(a.districtname),
+    surface: afterCode(a.surfacetype),
+    maintenance: afterCode(a.operationalmaintlevel),
+    open: [...byDates.entries()].map(([dates, vehicles]) => ({ dates, vehicles })),
+    request: hit.request,
+    retrievedAt: new Date().toISOString(),
   };
 }

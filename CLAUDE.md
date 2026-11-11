@@ -65,9 +65,9 @@ states.js → seasons.js → data.js → coverage.js → live.js → resources.j
   before `script.js` has defined them.
 - **The Draws, Almanac and Calibers tabs build their shell once and update in place.** Controls
   (sliders, chips, expanded rows) live in markup that is never re-rendered, and UI state lives in
-  `drawFilters`/`drawUi`, `almanacUi` and `bgState`. `renderAlmanac()` has three callers that can
-  fire mid-interaction — `refreshAll()`, script.js after the area's states resolve, and
-  `ensureWeather()` when NWS answers — so it only refills the location- and weather-dependent
+  `drawFilters`/`drawUi`, `almanacUi` and `bgState`. `renderAlmanac()` has four callers that can
+  fire mid-interaction — `refreshAll()`, script.js after the area's states resolve,
+  `ensureWeather()` when NWS answers, and `ensureLive()` when water or wildfire data lands — so it only refills the location- and weather-dependent
   containers. Don't add a whole-body `innerHTML` re-render to any of these tabs.
 - `calibers.js` follows the same rule: `initCalibers()` is called from script.js's start block,
   and `renderCalibers()` from `refreshAll()` only refreshes its official-links section, so a
@@ -86,7 +86,7 @@ states.js → seasons.js → data.js → coverage.js → live.js → resources.j
 | File | Role |
 |---|---|
 | `script.js` | App shell: `appState`, Leaflet map, search, results list, detail card, panel tabs, resizable split |
-| `live.js` | All network I/O (PAD-US, TIGERweb, Photon/Nominatim, Overpass, NWS weather) + geometry math |
+| `live.js` | All network I/O (PAD-US, TIGERweb, Photon/Nominatim, Overpass, NWS weather and alerts, USGS gauges, NOAA tides, NIFC wildfires, USFS MVUM) + geometry math |
 | `data.js` | Hand-written curated Huntsville places (`LOCATIONS`) |
 | `seasons.js` | Alabama season dates, `GAME`, and the shared date helpers (`parseDay`, `TODAY`, `daysBetween`, `formatDay`) |
 | `coverage.js` | `DETAIL_AREAS`, `STATE_LAYERS` (official state agency GIS layers, e.g. Montana FWP) and `coverageLevel()` |
@@ -143,6 +143,12 @@ it is a *screen-pixel* tolerance, so it is already visually lossless, and loweri
 per-frame cost. A 100-mile search in a dense forest state (e.g. Missoula, MT) pulls ~180 parcels
 and pans at ~400 ms/frame; that is a pre-existing limit, not a regression.
 
+The optional "Forest roads & trails (USFS)" overlay in the layers control is the Forest Service's
+Motor Vehicle Use Map, drawn by the Service as one `export` image per view (`refreshMvum()` in
+`script.js`, pane `mvum` under the place shapes) — no road geometry is downloaded. It only draws at
+zoom 11+, the Service's own scale limit. A click looks up the route with `fetchMvumRoute()`; a place
+shape's click handler tries that first and selects the place only when no route is under the pointer.
+
 `fetchStatesInArea()` uses much coarser geometry on purpose — those polygons are only used for
 point-in-polygon state assignment and are never drawn.
 
@@ -187,9 +193,9 @@ the *shape* of the data, not a trustworthy source of its *content*:
   check the rights field on the page before adding or swapping one.
 
 `STATE_LAYERS` in `coverage.js` is the exception: it is queried live from official state agency
-ArcGIS services (Montana FWP so far), and a place is marked huntable only from the agency's own
+ArcGIS services (20 states so far — each entry's comment says which agency statement its hunting or fishing tag rests on), and a place is marked huntable only from the agency's own
 hunting field. Records the agency marks as no-hunting or closed are fetched but hidden, and still
-remove their same-named PAD-US twin in `mergeStateLands()`. Each place keeps its exact request
+remove their same-named PAD-US twin in `mergeStateLands()`. A layer whose ID column is not `OBJECTID` needs `oidField`, or paging fails. States were left out where the agency layer has no hunting field (e.g. TX, FL, CA, ME, PA) or the service could not be confirmed as the agency's own. Each place keeps its exact request
 URLs and retrieval time in `place.provenance`.
 
 A key distinction the data model must preserve: PAD-US is authoritative for who manages a parcel

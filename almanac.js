@@ -4,7 +4,7 @@
 // calls initAlmanac(), which builds the tab's shell and controls ONCE. renderAlmanac() then only
 // fills the location- and weather-dependent parts, and it has three callers that can fire while
 // someone is mid-interaction: refreshAll() (every Map-tab filter change), script.js once the
-// search area's states resolve, and ensureWeather() when the NWS response lands. Because the day
+// search area's states resolve, and ensureWeather() / ensureLive() when a live response lands. Because the day
 // slider, outlook grid and month chips live in the shell, none of those re-renders touch them.
 //
 // Where the numbers come from:
@@ -275,6 +275,27 @@ function ensureWeather(center) {
     });
 }
 
+// Water conditions and wildfires use the same keyed-cache idea as the weather above, one slot each.
+const almanacLive = {
+  water: { key: null, status: "idle", data: null, error: null },
+  fires: { key: null, status: "idle", data: null, error: null },
+};
+
+function ensureLive(slot, key, fetcher) {
+  if (slot.key === key) return;
+  Object.assign(slot, { key, status: "loading", data: null, error: null });
+  fetcher()
+    .then((data) => {
+      if (slot.key === key) Object.assign(slot, { status: "ready", data });
+    })
+    .catch((err) => {
+      if (slot.key === key) Object.assign(slot, { status: "error", error: err.name === "TimeoutError" ? "timed out" : err.message });
+    })
+    .finally(() => {
+      if (slot.key === key) renderAlmanac();
+    });
+}
+
 // ---------- Section rendering ----------
 // UI state that survives every renderAlmanac(). `offset` is days after TODAY (so ?date= still
 // works); `month` is null while the guidance follows the selected day, else a month the user picked.
@@ -417,6 +438,8 @@ function almanacShell() {
       <div id="alm-overview"></div>
       <div id="alm-weather"></div>
     </div>
+
+    <div id="alm-water"></div>
 
     <section class="bg-section" aria-labelledby="alm-guide-h">
       <div class="panel-heading">
@@ -645,6 +668,7 @@ function weatherSection() {
       : [];
 
     body = `
+      ${alertsBlock(weather.alerts, weather.timeZone, weather.forecastUrl)}
       ${cells.length ? `<div class="alm-stats">${cells
         .map(([k, v]) => `<div class="alm-stat"><span class="alm-stat-k">${escapeHtml(k)}</span><span class="alm-stat-v">${escapeHtml(v)}</span></div>`)
         .join("")}</div>` : ""}
@@ -665,6 +689,7 @@ function weatherSection() {
           from today, whatever day you're planning above.</p>
       </div>
       ${body}
+      ${firesBlock()}
       <div class="alm-links inline">
         <a href="${escapeHtml(weather?.forecastUrl || "https://www.weather.gov")}" target="_blank" rel="noopener">Full NWS forecast &rarr;</a>
         <a href="https://www.ncei.noaa.gov/access/us-climate-normals/" target="_blank" rel="noopener">NOAA climate normals &rarr;</a>
@@ -674,6 +699,137 @@ function weatherSection() {
         NCEI, which needs an API token this static site does not carry, so the link above goes to the official tool
         rather than an estimate. Forecast data is live from api.weather.gov, which covers the U.S. only.
       </p>
+    </section>`;
+}
+
+// Active NWS watches, warnings and advisories for the searched point. `alerts` is null when that
+// call failed, which must not read as "nothing active".
+function alertsBlock(alerts, timeZone, forecastUrl) {
+  if (!alerts) return `<p class="notice">Active weather alerts couldn't be loaded. Check the full NWS forecast below.</p>`;
+  if (!alerts.length) return "";
+  const until = (iso) => {
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) ? ` Until ${new Date(ms).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: timeZone || undefined })}.` : "";
+  };
+  return `<div class="alm-alerts">${alerts
+    .map((a) => `<a class="notice warn alm-alert" href="${escapeHtml(forecastUrl)}" target="_blank" rel="noopener">
+        <strong>${escapeHtml(a.event || "Weather alert")}</strong>
+        <span>${escapeHtml(a.headline || "")}${escapeHtml(until(a.ends))}</span></a>`)
+    .join("")}</div>`;
+}
+
+// Wildfire perimeters reaching into the search radius, largest first. Nothing is drawn when there
+// are none; a failed lookup says so rather than implying the area is clear.
+function firesBlock() {
+  const { search } = appState;
+  const { status, data } = almanacLive.fires;
+  if (status === "loading" || status === "idle") return "";
+  if (status === "error") return `<p class="notice">Wildfire perimeters couldn't be loaded from the National Interagency Fire Center.</p>`;
+  if (!data.fires.length) return "";
+  const shown = data.fires.slice(0, 8);
+  return `
+    <h3 class="mini-head">Wildfires within ${search.radius} miles</h3>
+    <ul class="alm-fires">${shown
+      .map((f) => `<li><strong>${escapeHtml(f.name)}</strong>
+        <span>${[
+          f.acres != null && `${Math.round(f.acres).toLocaleString()} acres`,
+          f.contained != null ? `${f.contained}% contained` : "containment not reported",
+        ].filter(Boolean).map(escapeHtml).join(" · ")}</span></li>`)
+      .join("")}</ul>
+    <p class="alm-foot">${data.fires.length > shown.length ? `Largest ${shown.length} of ${data.fires.length}. ` : ""}Current perimeters from the
+      <a href="https://data-nifc.opendata.arcgis.com/" target="_blank" rel="noopener">National Interagency Fire Center</a>, retrieved
+      ${escapeHtml(new Date(data.retrievedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }))}.
+      Contained fires can still appear. Closures are set by the land manager — check
+      <a href="https://inciweb.wildfire.gov/" target="_blank" rel="noopener">InciWeb</a> before you go.</p>`;
+}
+
+// Nearby USGS gauges and, on the coast, NOAA tide predictions. Like the weather, this is the
+// current reading — it never follows the day slider.
+function waterSection() {
+  const { search } = appState;
+  const { status, data, error } = almanacLive.water;
+  const zone = zoneFor(search.center, almanacState.weather);
+
+  let body;
+  if (status === "loading" || status === "idle") {
+    body = `<p class="loading-line"><span class="spinner"></span>Loading USGS stream gauges…</p>`;
+  } else if (status === "error") {
+    body = `<p class="notice">Couldn't load water conditions${error ? ` (${escapeHtml(error)})` : ""}.
+      <button type="button" class="link-btn" data-almanac-retry>Try again</button></p>`;
+  } else {
+    const { gauges, tides } = data;
+    const fmt = (n, digits) => n.toLocaleString(undefined, { maximumFractionDigits: digits });
+    // A gauge can stop reporting for days and still be listed, so an old reading carries its date.
+    const readTime = (iso) => {
+      const ms = Date.parse(iso);
+      const clock = formatClock(ms, zone);
+      return Date.now() - ms > 12 * 3600000
+        ? `${new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: zone.tz || undefined })}, ${clock}`
+        : clock;
+    };
+    const gaugeHtml = !gauges.ok
+      ? `<p class="notice">Couldn't reach USGS Water Services${gauges.error ? ` (${escapeHtml(gauges.error)})` : ""}.
+          <button type="button" class="link-btn" data-almanac-retry>Try again</button></p>`
+      : !gauges.gauges.length
+        ? `<p class="notice">USGS has no active stream or lake gauge reporting within ${WATER_RADIUS_MI} miles of ${escapeHtml(search.label)}.</p>`
+        : `<div class="alm-gauges">${gauges.gauges
+            .map((g) => {
+              const cells = [
+                g.flow != null && ["Flow", `${fmt(g.flow, 1)} ft³/s`],
+                g.height != null && ["Gauge height", `${fmt(g.height, 2)} ft`],
+                g.tempC != null && ["Water temp.", `${Math.round(g.tempC * 1.8 + 32)}°F`],
+              ].filter(Boolean);
+              return `<article class="alm-gauge">
+                <a href="${escapeHtml(g.url)}" target="_blank" rel="noopener"><strong>${escapeHtml(g.name)}</strong></a>
+                <span class="alm-gauge-meta">${escapeHtml(formatMiles(g.distanceMi))} away · read ${escapeHtml(readTime(g.readAt))}</span>
+                <div class="alm-stats">${cells
+                  .map(([k, v]) => `<div class="alm-stat"><span class="alm-stat-k">${escapeHtml(k)}</span><span class="alm-stat-v">${escapeHtml(v)}</span></div>`)
+                  .join("")}</div>
+              </article>`;
+            })
+            .join("")}</div>
+          ${gauges.total > gauges.gauges.length ? `<p class="alm-line">Showing the nearest ${gauges.gauges.length} of ${gauges.total} gauges.</p>` : ""}`;
+
+    // Tide times come back in the station's own clock time, so they are printed as given.
+    const tideTime = (t) => {
+      const [date, clock] = t.split(" ");
+      const [y, m, d] = date.split("-").map(Number);
+      const [h, min] = clock.split(":").map(Number);
+      const day = new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short" });
+      return `${day} ${((h + 11) % 12) + 1}:${String(min).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+    };
+    // Drop highs and lows that have already passed (station time read against this clock is close
+    // enough for that), but never down to fewer than the last four.
+    const upcomingTides = (preds) => {
+      const next = preds.filter((p) => new Date(p.time.replace(" ", "T")).getTime() > Date.now() - 3600000);
+      return next.length >= 4 ? next : preds.slice(-4);
+    };
+    const tideHtml = !tides.ok
+      ? `<h3 class="mini-head">Tides</h3><p class="notice">Couldn't reach NOAA tide predictions${tides.error ? ` (${escapeHtml(tides.error)})` : ""}.</p>`
+      : !tides.station
+        ? ""
+        : `<h3 class="mini-head">Tides at ${escapeHtml(tides.station.name)}${tides.station.state ? `, ${escapeHtml(tides.station.state)}` : ""}
+            <span class="alm-gauge-meta">${escapeHtml(formatMiles(tides.station.distanceMi))} away</span></h3>
+          <div class="alm-stats">${upcomingTides(tides.predictions)
+            .map((p) => `<div class="alm-stat"><span class="alm-stat-k">${p.high ? "High" : "Low"} · ${escapeHtml(tideTime(p.time))}</span><span class="alm-stat-v">${escapeHtml(p.feet.toFixed(1))} ft</span></div>`)
+            .join("")}</div>
+          <div class="alm-links inline"><a href="${escapeHtml(tides.station.url)}" target="_blank" rel="noopener">NOAA tide predictions for this station &rarr;</a></div>`;
+
+    const when = new Date(data.retrievedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    body = `${gaugeHtml}${tideHtml}
+      <p class="alm-foot">Gauge readings are provisional data from <a href="https://waterdata.usgs.gov/" target="_blank" rel="noopener">USGS Water Services</a>${
+        tides.ok && tides.station ? `; tide predictions (station time, feet above MLLW) are from <a href="https://tidesandcurrents.noaa.gov/" target="_blank" rel="noopener">NOAA CO-OPS</a>` : ""
+      }. Retrieved ${escapeHtml(when)}. Tide stations farther than ${TIDE_RADIUS_MI} miles are not shown.</p>`;
+  }
+
+  return `
+    <section class="bg-section">
+      <div class="panel-heading">
+        <h2>Water conditions</h2>
+        <p class="sub">Current readings from USGS gauges within ${WATER_RADIUS_MI} miles of ${escapeHtml(search.label)} —
+          from right now, whatever day you're planning above.</p>
+      </div>
+      ${body}
     </section>`;
 }
 
@@ -722,8 +878,12 @@ function renderAlmanac() {
   $a("almanac-body").hidden = !appState.search;
   $a("almanac-empty").hidden = !!appState.search;
   if (!appState.search) return;
-  ensureWeather(appState.search.center);
+  const { center, radius } = appState.search;
+  ensureWeather(center);
+  ensureLive(almanacLive.water, weatherKey(center), () => fetchWaterConditions(center));
+  ensureLive(almanacLive.fires, `${weatherKey(center)}|${radius}`, () => fetchWildfires(center, radius));
   $a("alm-weather").innerHTML = weatherSection();
+  $a("alm-water").innerHTML = waterSection();
   $a("alm-official").innerHTML = resourcesSection();
   renderAlmanacDay();
 }
@@ -763,6 +923,10 @@ function initAlmanac() {
   root.addEventListener("click", (e) => {
     if (e.target.closest("[data-almanac-retry]")) {
       almanacState.key = null; // force ensureWeather() to re-fetch the same centre
+      // Same for a live section that failed, in whole or in part; ones that loaded are left alone.
+      const { water, fires } = almanacLive;
+      if (water.status === "error" || (water.data && !(water.data.gauges.ok && water.data.tides.ok))) water.key = null;
+      if (fires.status === "error") fires.key = null;
       return renderAlmanac();
     }
     if (e.target.closest("[data-almanac-seasons]")) {

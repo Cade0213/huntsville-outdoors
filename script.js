@@ -110,7 +110,83 @@ const baseMaps = {
   }),
 };
 baseMaps.Topo.addTo(map);
-L.control.layers(baseMaps, null, { position: "topright" }).addTo(map);
+
+// Optional overlay: the Forest Service's Motor Vehicle Use Map (live.js). It is drawn by the Service
+// as one image per view, in its own pane under the public-land shapes so those stay clickable.
+map.createPane("mvum").style.zIndex = 250;
+map.getPane("mvum").style.pointerEvents = "none";
+const mvumLayer = L.layerGroup();
+let mvumImage = null;
+let mvumAbort = null;
+
+const mvumActive = () => map.hasLayer(mvumLayer);
+
+function refreshMvum() {
+  const key = $("mvum-key");
+  key.hidden = !mvumActive();
+  if (!mvumActive()) return;
+  const zoomedIn = map.getZoom() >= MVUM_MIN_ZOOM;
+  $("mvum-key-text").textContent = zoomedIn ? "Forest roads & motor trails — click one for details" : "Zoom in to see forest roads & trails";
+  if (!zoomedIn) {
+    mvumLayer.clearLayers();
+    mvumImage = null;
+    return;
+  }
+  const bounds = map.getBounds();
+  const crs = map.options.crs;
+  const next = L.imageOverlay(mvumImageUrl(crs.project(bounds.getSouthWest()), crs.project(bounds.getNorthEast()), map.getSize()), bounds, {
+    pane: "mvum",
+    opacity: 0.9,
+  });
+  // Keep the previous image up until the new one has loaded, so panning doesn't blank the roads.
+  const previous = mvumImage;
+  mvumImage = next;
+  next.on("load", () => previous && mvumLayer.removeLayer(previous));
+  next.on("error", () => mvumLayer.removeLayer(next));
+  mvumLayer.addLayer(next);
+}
+
+// The designated road or trail under a map click, shown in a popup. Resolves true when one was
+// shown; silent (false) when there is none or the overlay is off.
+async function showMvumRoute(latlng) {
+  if (!mvumActive() || map.getZoom() < MVUM_MIN_ZOOM) return false;
+  mvumAbort?.abort();
+  mvumAbort = new AbortController();
+  // About 8 screen pixels either side of the pointer, in metres on the ground.
+  const metersPerPixel = (40075016.686 * Math.cos((latlng.lat * Math.PI) / 180)) / (256 * 2 ** map.getZoom());
+  let route;
+  try {
+    route = await fetchMvumRoute(latlng, metersPerPixel * 8, mvumAbort.signal);
+  } catch {
+    return false;
+  }
+  if (!route) return false;
+  const title = [route.kind, route.number].filter(Boolean).join(" ") + (route.name ? ` · ${route.name}` : "");
+  const rows = [
+    route.designation && ["Designation", route.designation],
+    ...route.open.map((o) => [`Open ${o.dates}`, o.vehicles.join(", ")]),
+    route.surface && ["Surface", route.surface.toLowerCase()],
+    route.maintenance && ["Maintained for", route.maintenance.toLowerCase()],
+    (route.forest || route.district) && ["Forest", [route.forest, route.district].filter(Boolean).join(", ")],
+  ].filter(Boolean);
+  const when = new Date(route.retrievedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  L.popup({ maxWidth: 300 })
+    .setLatLng(latlng)
+    .setContent(
+      `<div class="mvum-popup">
+        <strong>${escapeHtml(title)}</strong>
+        <dl>${rows.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`).join("")}</dl>
+        <p>Dates are as published on the Motor Vehicle Use Map. Temporary closure orders are not included — check with the ranger district.</p>
+        <p>Data: U.S. Forest Service, <a href="${escapeHtml(ENDPOINTS.usfsMvum)}" target="_blank" rel="noopener">Motor Vehicle Use Map</a>, retrieved ${escapeHtml(when)}.</p>
+      </div>`
+    )
+    .openOn(map);
+  return true;
+}
+
+L.control.layers(baseMaps, { "Forest roads &amp; trails (USFS)": mvumLayer }, { position: "topright" }).addTo(map);
+map.on("overlayadd overlayremove moveend", refreshMvum);
+map.on("click", (e) => showMvumRoute(e.latlng));
 L.control.scale({ position: "bottomleft", imperial: true, metric: false }).addTo(map);
 
 const searchLayer = L.layerGroup().addTo(map);
@@ -340,8 +416,10 @@ function renderMapLayers() {
   const bind = (layer, place) =>
     layer
       .bindTooltip(escapeHtml(place.name), { direction: "top", offset: [0, -8], sticky: layer instanceof L.Polygon })
-      .on("click", (e) => {
+      .on("click", async (e) => {
         L.DomEvent.stopPropagation(e);
+        // With the forest-roads overlay on, a click on a road inside a parcel is for the road.
+        if (await showMvumRoute(e.latlng)) return;
         selectPlace(place.id, { fromMap: true });
       });
 
@@ -543,6 +621,7 @@ function renderDetail(place) {
   const officialUrl = place.mapUrl || place.sourceUrl || (agency && agency.url);
   if (officialUrl) actions.push(`<a class="btn-primary block" href="${escapeHtml(officialUrl)}" target="_blank" rel="noopener">Official Map &amp; Rules &rarr;</a>`);
   if (place.pageLink) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.pageLink[1])}" target="_blank" rel="noopener">${escapeHtml(place.pageLink[0])}</a>`);
+  for (const [label, url] of place.extraLinks || []) actions.push(`<a class="btn-secondary" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`);
   actions.push(`<a class="btn-secondary" href="https://www.google.com/maps/dir/?api=1&destination=${place.point[0]},${place.point[1]}" target="_blank" rel="noopener">Directions</a>`);
   if (place.osmUrl) actions.push(`<a class="btn-secondary" href="${escapeHtml(place.osmUrl)}" target="_blank" rel="noopener">View on OpenStreetMap</a>`);
   actions.push(`<button type="button" class="btn-secondary" data-zoom="${escapeHtml(place.id)}">Zoom to</button>`);
@@ -1086,11 +1165,18 @@ $("map-toggle").addEventListener("click", () => {
   $("map-toggle").textContent = expanded ? "Show list" : "Expand map";
 });
 
-// Disclaimer "More" toggle (the full text is clamped on small screens).
-$("disclaimer-toggle").addEventListener("click", () => {
-  const open = $("disclaimer").classList.toggle("open");
+// The disclaimer's full text shows on hover and keyboard focus through CSS; the click toggle is
+// for touch screens, where neither exists.
+function setDisclaimerOpen(open) {
+  $("disclaimer").classList.toggle("open", open);
   $("disclaimer-toggle").setAttribute("aria-expanded", String(open));
-  $("disclaimer-toggle").textContent = open ? "Less" : "More";
+}
+$("disclaimer-toggle").addEventListener("click", () => setDisclaimerOpen(!$("disclaimer").classList.contains("open")));
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#disclaimer")) setDisclaimerOpen(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setDisclaimerOpen(false);
 });
 
 // ---------- Resizable split between the panel and the map ----------
